@@ -1,0 +1,288 @@
+"""Generate 02_kuis_deep_learning.ipynb for Bab 4."""
+import json
+from pathlib import Path
+
+OUT = Path("AI-Engineering-Curriculum/04-Deep-Learning-TensorFlow/02_kuis_deep_learning.ipynb")
+
+
+def md(*lines):
+    return {"cell_type": "markdown", "metadata": {}, "source": [*lines, ""]}
+
+
+def code(*lines):
+    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
+            "source": [*lines, ""]}
+
+
+cells = [
+    md(
+        "# 📝 Kuis Bab 4 — Deep Learning & TensorFlow",
+        "",
+        "10 soal (4 pilihan ganda + 6 coding), total **19 poin**. Penilaian otomatis di cell terakhir.",
+        "",
+        "**Aturan:** kerjakan tanpa membuka materi. Soal coding: isi di bawah `# TODO`,",
+        "lalu jalankan cell kuis di bawah. Boleh pakai NumPy.",
+    ),
+    md("## Bagian A — Pilihan Ganda (isi `JAWABAN`)"),
+    code(
+        "# Isi jawaban pilihan ganda di sini, contoh: JAWABAN[1] = 'a'\n",
+        "\n",
+        "JAWABAN = {\n",
+        "    1: None,\n",
+        "    2: None,\n",
+        "    3: None,\n",
+        "    4: None,\n",
+        "}",
+    ),
+    md(
+        "### Soal 1 — ReLU pada input negatif",
+        "",
+        "Berapa output ReLU untuk input `-3`?",
+        "",
+        "- a) `-3`",
+        "- b) `3`",
+        "- c) `0`",
+        "- d) tidak terdefinisi (error)",
+    ),
+    md(
+        "### Soal 2 — Rentang output sigmoid",
+        "",
+        "Fungsi sigmoid `σ(z) = 1/(1+e⁻ᶻ)` selalu menghasilkan nilai dalam rentang…",
+        "",
+        "- a) `[-1, 1]`",
+        "- b) `[0, 1]`",
+        "- c) `[0, ∞)`",
+        "- d) `(-∞, ∞)`",
+    ),
+    md(
+        "### Soal 3 — Membaca kurva training",
+        "",
+        "Selama training, **train loss terus turun** tapi **val loss turun lalu mulai naik**.",
+        "Ini tanda apa, dan apa tindakan paling tepat?",
+        "",
+        "- a) underfitting — perbesar model & latih lebih lama",
+        "- b) overfitting — berhenti lebih awal (early stopping) / regularisasi",
+        "- c) learning rate terlalu kecil — naikkan 10×",
+        "- d) data terlalu sedikit — hapus validation set",
+    ),
+    md(
+        "### Soal 4 — Output layer klasifikasi 10 kelas",
+        "",
+        "Untuk klasifikasi digit 0–9 (10 kelas, label `0..9`), output layer yang tepat adalah…",
+        "",
+        "- a) `Dense(1, activation='sigmoid')` + `binary_crossentropy`",
+        "- b) `Dense(10, activation='relu')` + `mse`",
+        "- c) `Dense(10, activation='softmax')` + `sparse_categorical_crossentropy`",
+        "- d) `Dense(10, activation='sigmoid')` + `categorical_crossentropy`",
+    ),
+    md("## Bagian B — Coding"),
+    md(
+        "### Soal 5 — Forward ReLU (2 poin)",
+        "",
+        "`relu_forward(Z)` → `max(0, Z)` untuk array NumPy apa pun (tanpa loop per elemen)."
+    ),
+    code(
+        "import numpy as np\n",
+        "\n",
+        "def relu_forward(Z):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# print(relu_forward(np.array([-3., 0., 2.5])))   # [0. 0. 2.5]\n",
+        "# print(relu_forward(np.array([[-1., 4.], [7., -0.5]])))"
+    ),
+    md(
+        "### Soal 6 — Sigmoid stabil-numerik (3 poin)",
+        "",
+        "`sigmoid_stabil(z)` → 1/(1+e⁻ᶻ) **tanpa overflow** untuk z sangat besar/kecil.",
+        "Hint dua cabang: untuk `z >= 0` pakai `1/(1+exp(-z))`; untuk `z < 0` pakai",
+        "`ez/(1+ez)` dengan `ez = exp(z)`. Wajib: `sigmoid_stabil(0) == 0.5`."
+    ),
+    code(
+        "def sigmoid_stabil(z):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# print(sigmoid_stabil(0.0))                          # 0.5\n",
+        "# print(sigmoid_stabil(np.array([-1000., 0., 1000.])))  # [0, 0.5, 1] tanpa warning"
+    ),
+    md(
+        "### Soal 7 — Binary cross-entropy (3 poin)",
+        "",
+        "`bce_loss(y_true, p_pred, eps=1e-12)` → rata-rata",
+        "`−[y·log p + (1−y)·log(1−p)]` dengan p **di-clip** ke `[eps, 1−eps]`",
+        "(jaga dari `log(0)`). y dan p boleh list — konversi ke array float."
+    ),
+    code(
+        "def bce_loss(y_true, p_pred, eps=1e-12):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# print(bce_loss([1., 0.], [1., 0.]))    # ≈ 0.0 (kena clip)\n",
+        "# print(bce_loss([1., 1., 1., 1.], [0.5]*4))  # ln(2) ≈ 0.6931\n",
+        "# print(bce_loss([1., 0.], [0., 1.]))    # bilangan besar tapi FINITE"
+    ),
+    md(
+        "### Soal 8 — Softmax stabil (3 poin)",
+        "",
+        "`softmax_stabil(logits)` → softmax per baris, **kurangi max tiap baris dulu**",
+        "(anti-overflow). Input `(n, k)` → output `(n, k)` dengan tiap baris berjumlah 1."
+    ),
+    code(
+        "def softmax_stabil(logits):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# z = np.array([[2., 1., 0.1], [-1., 0., 3.]])\n",
+        "# print(softmax_stabil(z).sum(axis=1))    # [1. 1.]\n",
+        "# print(softmax_stabil(np.array([[1000., 1000., 999.]])))  # tanpa overflow"
+    ),
+    md(
+        "### Soal 9 — Inisialisasi He (2 poin)",
+        "",
+        "`he_init_weights(rng, fan_in, fan_out)` → array `(fan_in, fan_out)` dari",
+        "`rng.normal(0, sqrt(2/fan_in), size)`. Deterministik: rng sama → hasil sama."
+    ),
+    code(
+        "def he_init_weights(rng, fan_in, fan_out):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# w = he_init_weights(np.random.default_rng(0), 128, 64)\n",
+        "# print(w.shape, w.std())   # (128, 64) ≈ 0.125 (sqrt(2/128))"
+    ),
+    md(
+        "### Soal 10 — Split mini-batch (2 poin)",
+        "",
+        "`split_batches(n, batch_size)` → list ukuran tiap batch yang menampung tepat",
+        "`n` sampel. Contoh: `(100, 32)` → `[32, 32, 32, 4]`; sisa `0` tidak ditambahkan."
+    ),
+    code(
+        "def split_batches(n, batch_size):\n",
+        "    # TODO\n",
+        "    pass\n",
+        "\n",
+        "# print(split_batches(100, 32))   # [32, 32, 32, 4]\n",
+        "# print(split_batches(10, 10))    # [10]\n",
+        "# print(split_batches(10, 7))     # [7, 3]"
+    ),
+    md("## 🧮 Penilaian Otomatis"),
+    code(
+        "import numpy as np\n",
+        "\n",
+        "total_bobot = 19\n",
+        "\n",
+        "\n",
+        "def _tanpa_overflow(fn):\n",
+        "    \"\"\"True kalau fn() berjalan tanpa FloatingPointError (overflow).\"\"\"\n",
+        "    with np.errstate(over='raise'):\n",
+        "        try:\n",
+        "            fn()\n",
+        "            return True\n",
+        "        except FloatingPointError:\n",
+        "            return False\n",
+        "\n",
+        "\n",
+        "def jalankan_kuis():\n",
+        "    skor = 0\n",
+        "    rincian = []\n",
+        "\n",
+        "    def cek_pilihan(nomor, kunci, bobot=1):\n",
+        "        nonlocal skor\n",
+        "        benar = JAWABAN.get(nomor) == kunci\n",
+        "        skor += bobot if benar else 0\n",
+        "        rincian.append((nomor, benar))\n",
+        "\n",
+        "    def cek_kode(nomor, uji, bobot=1):\n",
+        "        nonlocal skor\n",
+        "        benar = False\n",
+        "        try:\n",
+        "            benar = bool(uji())\n",
+        "        except Exception as e:\n",
+        "            print(f'  soal {nomor}: error -> {type(e).__name__}: {e}')\n",
+        "        skor += bobot if benar else 0\n",
+        "        rincian.append((nomor, benar))\n",
+        "\n",
+        "    def approx(a, b, tol=1e-9):\n",
+        "        return np.allclose(np.asarray(a, dtype=float), np.asarray(b, dtype=float), atol=tol)\n",
+        "\n",
+        "    cek_pilihan(1, 'c')\n",
+        "    cek_pilihan(2, 'b')\n",
+        "    cek_pilihan(3, 'b')\n",
+        "    cek_pilihan(4, 'c')\n",
+        "\n",
+        "    cek_kode(5, lambda: approx(relu_forward(np.array([-3., 0., 2.5])), [0., 0., 2.5])\n",
+        "                      and approx(relu_forward(np.array([[-1., 4.], [7., -0.5]])),\n",
+        "                                 [[0., 4.], [7., 0.]]), bobot=2)\n",
+        "\n",
+        "    tn6 = np.array([-1000., 0., 1000.])\n",
+        "    cek_kode(6, lambda: abs(sigmoid_stabil(0.0) - 0.5) < 1e-12\n",
+        "                      and approx(sigmoid_stabil([-2., 2.]),\n",
+        "                                 [1 / (1 + np.exp(2.)), 1 / (1 + np.exp(-2.))])\n",
+        "                      and np.isfinite(sigmoid_stabil(tn6)).all()\n",
+        "                      and 0.0 <= sigmoid_stabil(-1000.) < 1e-300\n",
+        "                      and 1 - 1e-15 < sigmoid_stabil(1000.) <= 1.0\n",
+        "                      and _tanpa_overflow(lambda: sigmoid_stabil(tn6)), bobot=3)\n",
+        "\n",
+        "    cek_kode(7, lambda: approx(bce_loss(np.array([1., 0.]), np.array([1., 0.])), 0.0)\n",
+        "                      and approx(bce_loss([1., 1., 1., 1.], [0.5, 0.5, 0.5, 0.5]), np.log(2))\n",
+        "                      and approx(bce_loss([1., 0., 1.], [0.9, 0.2, 0.8]),\n",
+        "                                 -(np.log(0.9) + np.log(0.8) + np.log(1 - 0.2)) / 3)\n",
+        "                      and np.isfinite(bce_loss(np.array([1., 0.]), np.array([0., 1.]))), bobot=3)\n",
+        "\n",
+        "    z8 = np.array([[2., 1., 0.1], [-1., 0., 3.]])\n",
+        "    ref8 = np.exp(z8 - z8.max(axis=1, keepdims=True))\n",
+        "    ref8 = ref8 / ref8.sum(axis=1, keepdims=True)\n",
+        "    z8x = np.array([[1000., 1000., 999.]])\n",
+        "    p8x = softmax_stabil(z8x)\n",
+        "    cek_kode(8, lambda: approx(softmax_stabil(z8), ref8)\n",
+        "                      and approx(softmax_stabil(z8).sum(axis=1), [1., 1.])\n",
+        "                      and p8x.shape == (1, 3)\n",
+        "                      and approx(p8x.sum(axis=1), [1.])\n",
+        "                      and np.isfinite(p8x).all()\n",
+        "                      and _tanpa_overflow(lambda: softmax_stabil(z8x)), bobot=3)\n",
+        "\n",
+        "    w9 = he_init_weights(np.random.default_rng(0), 128, 64)\n",
+        "    cek_kode(9, lambda: w9.shape == (128, 64)\n",
+        "                      and 0.04 < w9.std() < 0.3\n",
+        "                      and (w9 < 0).any()\n",
+        "                      and approx(he_init_weights(np.random.default_rng(7), 128, 64),\n",
+        "                                 he_init_weights(np.random.default_rng(7), 128, 64)), bobot=2)\n",
+        "\n",
+        "    cek_kode(10, lambda: split_batches(100, 32) == [32, 32, 32, 4]\n",
+        "                      and split_batches(10, 10) == [10]\n",
+        "                      and split_batches(10, 7) == [7, 3], bobot=2)\n",
+        "\n",
+        "    print('=' * 46)\n",
+        "    for nomor, benar in rincian:\n",
+        "        print(f'  Soal {nomor:>2}: {\"BENAR\" if benar else \"salah\"}')\n",
+        "    print('=' * 46)\n",
+        "    print(f'SKOR AKHIR: {skor}/{total_bobot}')\n",
+        "    if skor == total_bobot:\n",
+        "        print('Sempurna! Lanjut ke project starter.')\n",
+        "    elif skor >= 15:\n",
+        "        print('Bagus! Review soal yang salah, lalu lanjut.')\n",
+        "    else:\n",
+        "        print('Ulangi bagian terkait di lab, coba lagi besok.')\n",
+        "\n",
+        "jalankan_kuis()",
+    ),
+    md(
+        "---",
+        "",
+        "Sudah mencoba serius? Bandingkan pendekatanmu dengan `03_kunci_jawaban_kuis_deep_learning.ipynb`",
+        "— fokus pada intuisi di balik tiap jawaban."
+    ),
+]
+
+nb = {
+    "cells": cells,
+    "metadata": {
+        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "language_info": {"name": "python", "version": "3.11"},
+    },
+    "nbformat": 4,
+    "nbformat_minor": 5,
+}
+OUT.write_text(json.dumps(nb, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+print("wrote", OUT, f"({len(cells)} cells)")

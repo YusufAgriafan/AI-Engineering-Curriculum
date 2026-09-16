@@ -1,0 +1,11 @@
+{
+ "lr_val_acc": 0.8888888888888888,
+ "mlp_val_acc": 0.9777777777777777,
+ "mlp_test_acc": 0.9888888888888889,
+ "n_train": 420,
+ "n_val": 90,
+ "n_test": 90,
+ "pos_train": 206,
+ "pos_val": 49,
+ "pos_test": 45
+}
