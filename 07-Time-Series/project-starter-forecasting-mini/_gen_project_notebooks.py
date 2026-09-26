@@ -1,0 +1,427 @@
+"""Generate starter.ipynb & solusi.ipynb for the Bab 7 forecasting-mini project."""
+import json
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+
+
+def md(*lines):
+    return {"cell_type": "markdown", "metadata": {}, "source": [*lines, ""]}
+
+
+def code(*lines):
+    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
+            "source": [*lines, ""]}
+
+
+def nb(cells):
+    return {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python", "version": "3.11"},
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+
+
+def tulis(nama, cells):
+    path = BASE / nama
+    path.write_text(json.dumps(nb(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("wrote", path)
+
+
+SETUP = [
+    "import sys\n",
+    "from pathlib import Path\n",
+    "\n",
+    "sys.path.insert(0, str(Path.cwd()))\n",
+    "\n",
+    "import matplotlib.pyplot as plt\n",
+    "import numpy as np\n",
+    "\n",
+    "from ts_mini.ar import ar_forecast, fit_ar\n",
+    "from ts_mini.baseline import (forecast_ham, forecast_naive, forecast_seasonal_naive,\n",
+    "                              mae, rmse, smape)\n",
+    "from ts_mini.data import HORIZON, SPLIT_IDX, make_mult_series, make_series\n",
+    "from ts_mini.holtwinters import holt_winters_add, holt_winters_mult\n",
+    "from ts_mini.windowing import buat_window, buat_window_multi, split_waktu\n",
+    "\n",
+    "seri, t = make_series()            # aditif: trend + musiman + noise\n",
+    "seri_mult, _ = make_mult_series()  # multiplikatif: amplitudo ikut level\n",
+    "train, val = seri[:SPLIT_IDX], seri[SPLIT_IDX:]\n",
+    "print(f'aditif n={len(seri)} | mult n={len(seri_mult)} | train={len(train)} val={len(val)}')\n",
+]
+
+LIHAT_DATA = [
+    "plt.figure(figsize=(14, 4))\n",
+    "plt.plot(t, seri, alpha=0.6, label='aditif')\n",
+    "plt.plot(t, seri_mult, alpha=0.6, label='multiplikatif')\n",
+    "plt.xlabel('hari'); plt.legend(); plt.grid(alpha=0.3)\n",
+    "plt.title('Dua seri terkunci — resepnya diketahui, model harus menemukannya')\n",
+    "plt.show()\n",
+    "\n",
+    "print('contoh 5 nilai aditif:', np.round(seri[:5], 2))\n",
+    "print('amplitudo mult naik dengan level -> perhatikan puncak tahun ke-3 vs tahun ke-1')\n",
+]
+
+WINDOWING = [
+    "# Windowing: 1 seri -> dataset supervised (fungsi yang lolos test suite)\n",
+    "Xw, yw = buat_window(seri, 35)\n",
+    "Xtr, ytr, Xva, yva = split_waktu(Xw, yw, 0.8)\n",
+    "print(f'X={Xw.shape}, y={yw.shape} | train={len(Xtr)}, val={len(Xva)}')\n",
+    "assert Xw.shape == (len(seri) - 35, 35)\n",
+    "assert np.array_equal(Xtr, Xw[:int(len(Xw) * 0.8)]), 'split harus berurutan waktu'\n",
+    "\n",
+    "# multi-step: window 35 -> prediksi 14 hari sekaligus\n",
+    "Xm, ym = buat_window_multi(seri, 35, 14)\n",
+    "print(f'multi: X={Xm.shape}, y={ym.shape}')\n",
+    "\n",
+    "# visualisasi satu window + target\n",
+    "i0 = 100\n",
+    "plt.figure(figsize=(12, 4))\n",
+    "plt.plot(range(i0, i0 + 35), Xw[i0], 'b-', label='window (fitur)')\n",
+    "plt.plot([i0 + 35], [yw[i0]], 'r*', ms=15, label='target')\n",
+    "plt.xlabel('hari'); plt.legend(); plt.grid(alpha=0.3)\n",
+    "plt.title('Satu sampel: 35 hari ke belakang -> 1 hari ke depan')\n",
+    "plt.show()\n",
+]
+
+BASELINE = [
+    "# Tiga baseline di val 219 hari — angka yang harus dikalahkan\n",
+    "pred_naive = forecast_naive(train, HORIZON)\n",
+    "pred_sn = forecast_seasonal_naive(train, HORIZON, 365)\n",
+    "pred_ham = forecast_ham(train, HORIZON)\n",
+    "\n",
+    "mae_naive = mae(val, pred_naive)\n",
+    "mae_sn = mae(val, pred_sn)\n",
+    "mae_ham = mae(val, pred_ham)\n",
+    "print(f'naive          : MAE {mae_naive:.3f} | RMSE {rmse(val, pred_naive):.3f}')\n",
+    "print(f'seas-naive-365 : MAE {mae_sn:.3f} | sMAPE {smape(val, pred_sn):.4f}')\n",
+    "print(f'HAM            : MAE {mae_ham:.3f}')\n",
+    "assert 8.0 < mae_naive < 10.5\n",
+    "assert 17.0 < mae_sn < 21.0\n",
+    "assert 14.0 < mae_ham < 18.0\n",
+    "print('✅ Baseline tercatat. Model manapun yang tidak mengalahkan ini = tidak layak.')\n",
+    "\n",
+    "plt.figure(figsize=(14, 4))\n",
+    "plt.plot(val, 'k-', alpha=0.6, label='aktual')\n",
+    "plt.plot(pred_naive, 'b--', label=f'naive ({mae_naive:.1f})')\n",
+    "plt.plot(pred_sn, 'g--', label=f'seas-naive ({mae_sn:.1f})')\n",
+    "plt.xlabel('hari ke-depan'); plt.legend(); plt.grid(alpha=0.3)\n",
+    "plt.title('Baseline di horizon panjang')\n",
+    "plt.show()\n",
+]
+
+AR_PART = [
+    "# AR(7): bagus di horizon pendek, kalah di horizon panjang\n",
+    "coef7 = fit_ar(train, 7)\n",
+    "print('coef AR(7):', np.round(coef7, 4).tolist())\n",
+    "\n",
+    "fc7_pendek = ar_forecast(coef7, train[-7:], 7)\n",
+    "akt7 = seri[SPLIT_IDX:SPLIT_IDX + 7]\n",
+    "ape7 = float(np.mean(np.abs(fc7_pendek - akt7) / akt7))\n",
+    "\n",
+    "fc7 = ar_forecast(coef7, train[-7:], HORIZON)\n",
+    "mae_ar7 = mae(val, fc7)\n",
+    "print(f'AR(7) 7-langkah  : APE = {ape7:.4f}  (bagus!)')\n",
+    "print(f'AR(7) {HORIZON}-langkah : MAE = {mae_ar7:.3f}  (kalah dari naive {mae_naive:.3f}!)')\n",
+    "assert ape7 < 0.05\n",
+    "assert mae_ar7 > mae_naive, 'error rekursif harus menumpuk melebihi naive'\n",
+    "print('✅ Pelajaran: model bagus di 1-step ≠ bagus di multi-step. Horizon selalu disebut.')\n",
+    "\n",
+    "plt.figure(figsize=(14, 4))\n",
+    "plt.plot(val, 'k-', alpha=0.5, label='aktual')\n",
+    "plt.plot(fc7, 'r-', label=f'AR(7) rekursif (MAE {mae_ar7:.1f})')\n",
+    "plt.xlabel('hari ke-depan'); plt.legend(); plt.grid(alpha=0.3)\n",
+    "plt.title('Multi-step rekursif: prediksi kehilangan pola seiring horizon')\n",
+    "plt.show()\n",
+]
+
+HW_PART = [
+    "# Holt-Winters di seri ADITIF\n",
+    "fc_add, lv, tb, ss = holt_winters_add(train, 365, 0.3, 0.05, 0.3, HORIZON)\n",
+    "fc_mul = holt_winters_mult(train, 365, 0.3, 0.05, 0.3, HORIZON)\n",
+    "mae_add = mae(val, fc_add)\n",
+    "mae_mul = mae(val, fc_mul)\n",
+    "print(f'[aditif]      level={lv:.2f} trend={tb:.4f}')\n",
+    "print(f'HW add  MAE: {mae_add:.3f} | HW mult MAE: {mae_mul:.3f}')\n",
+    "assert 20.7 < mae_add < 21.3 and 16.1 < mae_mul < 16.7\n",
+    "\n",
+    "# Holt-Winters di seri MULTIPLIKATIF — di sinilah pilihan versi menentukan\n",
+    "tr_m, va_m = seri_mult[:SPLIT_IDX], seri_mult[SPLIT_IDX:]\n",
+    "fc_add_m = holt_winters_add(tr_m, 365, 0.3, 0.05, 0.3, HORIZON)[0]\n",
+    "fc_mul_m = holt_winters_mult(tr_m, 365, 0.3, 0.05, 0.3, HORIZON)\n",
+    "mae_add_m = mae(va_m, fc_add_m)\n",
+    "mae_mul_m = mae(va_m, fc_mul_m)\n",
+    "print(f'[multiplikatif] HW add MAE: {mae_add_m:.3f} | HW mult MAE: {mae_mul_m:.3f}')\n",
+    "assert mae_mul_m < mae_add_m, 'di seri multiplikatif, mult harus menang'\n",
+    "print('✅ Dua arah terbukti: pilih versi dari BENTUK amplitudo, bukan selera.')\n",
+    "\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(14, 4), sharex=True)\n",
+    "axes[0].plot(va_m, 'k-', alpha=0.5, label='aktual')\n",
+    "axes[0].plot(fc_add_m, 'b--', label=f'add ({mae_add_m:.1f})')\n",
+    "axes[0].plot(fc_mul_m, 'r-', label=f'mult ({mae_mul_m:.1f})')\n",
+    "axes[0].set_title('Seri multiplikatif'); axes[0].legend(); axes[0].grid(alpha=0.3)\n",
+    "axes[1].plot(val, 'k-', alpha=0.5, label='aktual')\n",
+    "axes[1].plot(fc_add, 'b--', label=f'add ({mae_add:.1f})')\n",
+    "axes[1].plot(fc_mul, 'r-', label=f'mult ({mae_mul:.1f})')\n",
+    "axes[1].set_title('Seri aditif'); axes[1].legend(); axes[1].grid(alpha=0.3)\n",
+    "plt.tight_layout()\n",
+    "plt.show()\n",
+]
+
+BACKTEST_PART = [
+    "# Rolling backtest: 3 fold x 90 hari — angka per-fold, bukan cuma mean\n",
+    "def rolling_backtest(tr, h, build_forecast, n_folds=3):\n",
+    "    metrik = []\n",
+    "    n = len(tr)\n",
+    "    for k in range(n_folds):\n",
+    "        cut = n - (k + 1) * h\n",
+    "        trk, tek = tr[:cut], tr[cut:cut + h]\n",
+    "        fc = build_forecast(trk, h)\n",
+    "        metrik.append((mae(tek, fc), rmse(tek, fc)))\n",
+    "    return metrik\n",
+    "\n",
+    "def buat_naive(trk, h):\n",
+    "    return forecast_naive(trk, h)\n",
+    "\n",
+    "def buat_sn365(trk, h):\n",
+    "    return forecast_seasonal_naive(trk, h, 365)\n",
+    "\n",
+    "def buat_hw(trk, h):\n",
+    "    return holt_winters_add(trk, 365, 0.3, 0.05, 0.3, h)[0]\n",
+    "\n",
+    "hasil = {}\n",
+    "for nama_, fn in [('naive', buat_naive), ('seas-naive365', buat_sn365), ('HW-add', buat_hw)]:\n",
+    "    hasil[nama_] = rolling_backtest(train, 90, fn, 3)\n",
+    "    print(f'{nama_:14s}: {[(round(a, 2), round(b, 2)) for a, b in hasil[nama_]]}')\n",
+    "mean_naive = float(np.mean([a for a, _ in hasil['naive']]))\n",
+    "mean_sn = float(np.mean([a for a, _ in hasil['seas-naive365']]))\n",
+    "mean_hw = float(np.mean([a for a, _ in hasil['HW-add']]))\n",
+    "assert 3.0 < mean_naive < 25.0 and 17.0 < mean_sn < 19.0 and 14.0 < mean_hw < 19.0\n",
+    "assert mean_hw < mean_sn, 'HW-add konsisten menang dari seasonal-naive'\n",
+    "print(f'✅ mean MAE: naive {mean_naive:.2f} | seas-naive {mean_sn:.2f} | HW {mean_hw:.2f}')\n",
+    "print('   Perhatikan naive fold-2 (MAE ~21 vs ~5): satu fold di lembah musiman')\n",
+    "print('   membalikkan peringkat. Laporkan SEBARAN fold, bukan hanya mean.')\n",
+]
+
+RINGKASAN = [
+    "print('=' * 52)\n",
+    "print('RINGKASAN ANGKA AKHIR (isi RUBRIK.md dari sini)')\n",
+    "print('=' * 52)\n",
+    "print(f'1. baseline val MAE       : naive {mae_naive:.2f} | seas-naive {mae_sn:.2f} | HAM {mae_ham:.2f}')\n",
+    "print(f'2. AR(7)                  : APE 7-step {ape7:.4f} | MAE {HORIZON}-step {mae_ar7:.2f}')\n",
+    "print(f'3. HW aditif / mult       : {mae_add:.2f} / {mae_mul:.2f} (seri aditif)')\n",
+    "print(f'4. HW di seri multipl.    : add {mae_add_m:.2f} vs mult {mae_mul_m:.2f}')\n",
+    "print(f'5. backtest mean MAE      : naive {mean_naive:.2f} | sn {mean_sn:.2f} | HW {mean_hw:.2f}')\n",
+    "print('Test/val disentuh sekali — angka ini final. Tidak ada \"coba-coba lagi\".')\n",
+]
+
+PERTANYAAN = (
+    "**Pertanyaan Analisis** (jawab di cell markdown — bagian penilaian, lihat RUBRIK.md):\n",
+    "",
+    "1. Split acak menampilkan MAE ~6.4 vs temporal ~7.3 pada 1-NN window — kenapa",
+    "   angka yang lebih rendah itu justru tanda model lebih buruk? Jelaskan mekanisme",
+    "   kebocorannya (bukti di lab Bagian 3).",
+    "2. AR(7): APE 7-langkah ~1.9% tapi MAE 219-langkah ~19.7. Apa yang terjadi di",
+    "   antara keduanya, dan kapan klaim \"model bagus\" jadi menyesatkan?",
+    "3. Kenapa AR pada musiman 365 hari tidak praktis, dan bagaimana trend+dummies",
+    "   (regresi [1, t, D_1..D_365], lihat lab Bagian 6) menyelesaikannya? Apa biayanya?",
+    "4. Di seri multiplikatif HW-mult menang tegas; di seri aditif keputusannya tipis.",
+    "   Bagaimana kamu MEMUTUSKAN aditif vs multiplikatif di data nyata tanpa tahu",
+    "   resepnya? (hint: plot amplitudo vs level, atau backtest keduanya)",
+    "5. Naive menang mean backtest (10.33) tapi fold-2-nya ~21 vs ~5. Kenapa mean saja",
+    "   tidak cukup untuk memilih model, dan metrik sebaran apa yang kamu laporkan?",
+    "6. Koneksi Bab 16 (MLOps): pola berubah setelah model dipasang (drift). Bagian",
+    "   mana dari pipeline-mu yang dijalankan ulang berkala, dan angka apa yang",
+    "   dipantau di produksi?",
+)
+
+EKSPERIMEN_OPSIONAL = (
+    "### (Opsional) Eksperimen untuk Pertanyaan 4 — grid kecil α/β/γ",
+    "",
+    "Salin loop ini, jalankan di TRAIN saja, lihat apakah urutan model berubah.",
+    "Ingat: val hanya boleh disentuh SEKALI di akhir untuk konfigurasi juara.",
+)
+
+EKSPERIMEN_CODE = [
+    "# TODO: grid kecil di TRAIN (pakai backtest, BUKAN val) untuk memilih konfigurasi\n",
+    "# contoh kerangka:\n",
+    "# for alpha_ in (0.1, 0.3, 0.5):\n",
+    "#     def buat(trk, h, a_=alpha_):\n",
+    "#         return holt_winters_add(trk, 365, a_, 0.05, 0.3, h)[0]\n",
+    "#     met = rolling_backtest(train, 90, buat, 3)\n",
+    "#     print(f'alpha={alpha_}: mean MAE {np.mean([m[0] for m in met]):.3f}')\n",
+]
+
+# ============================== STARTER ==============================
+starter = [
+    md(
+        "# 🏗️ Starter — Forecasting Mini dari Nol (Bab 7)",
+        "",
+        "> Notebook eksperimen. **Prasyarat:** semua 40 test hijau",
+        "> (`python -m unittest discover -s tests -v`).",
+        "",
+        "**Aturan main:** semua keputusan (W, p, α/β/γ, fold) diambil di data training/val.",
+        "Angka akhir di Bagian 6 dihitung SEKALI.",
+    ),
+    md("## Setup & Peta Data"),
+    code(*SETUP),
+    code(*LIHAT_DATA),
+    md(
+        "## Bagian 1 — Windowing & Split Temporal",
+        "",
+        "Fungsi yang lolos test suite kini dipakai sungguhan. Perhatikan: split TANPA shuffle.",
+    ),
+    code(*WINDOWING),
+    md("## Bagian 2 — Baseline: Angka yang Harus Dikalahkan"),
+    code(*BASELINE),
+    md(
+        "## Bagian 3 — AR(7): Bagus di 7 Langkah, Kalah di 219",
+        "",
+        "Bukti angka bahwa error rekursif menumpuk.",
+    ),
+    code(*AR_PART),
+    md("## Bagian 4 — Holt-Winters: Aditif vs Multiplikatif di Dua Seri"),
+    code(*HW_PART),
+    md(
+        "## Bagian 5 — Rolling Backtest: Keputusan dari Sebaran Fold",
+    ),
+    code(*BACKTEST_PART),
+    md(
+        "## Bagian 6 — Ringkasan Angka Akhir (SEKALI saja)",
+        "",
+        "Isi RUBRIK.md dari angka-angka ini. Setelah cell ini dijalankan, eksperimen selesai.",
+    ),
+    code(*RINGKASAN),
+    md(*PERTANYAAN),
+    md(*EKSPERIMEN_OPSIONAL),
+    code(*EKSPERIMEN_CODE),
+]
+
+# ============================== SOLUSI ==============================
+solusi = [
+    md(
+        "# ✅ Solusi — Forecasting Mini dari Nol (Bab 7)",
+        "",
+        "> **Buka HANYA SETELAH** selesai mencoba (atau mentok). Sama seperti kunci kuis:",
+        "> membaca solusi sebelum berjuang = ilusi kompetensi.",
+        "",
+        "Notebook ini mem-patch `ts_mini` dengan implementasi referensi",
+        "(`solusi/ts_mini_ref.py`) lalu menjalankan alur eksperimen yang sama dengan",
+        "starter — jadi semua angka bisa direproduksi. Source tiap fungsi kunci",
+        "ditampilkan dengan `inspect.getsource`.",
+    ),
+    md("## Setup (patch implementasi referensi)"),
+    code(
+        "import sys\n",
+        "from pathlib import Path\n",
+        "\n",
+        "sys.path.insert(0, str(Path.cwd()))\n",
+        "sys.path.insert(0, str(Path.cwd() / 'solusi'))\n",
+        "\n",
+        "import inspect\n",
+        "import matplotlib.pyplot as plt\n",
+        "import numpy as np\n",
+        "\n",
+        "import ts_mini_ref as ref\n",
+        "import ts_mini.ar as ar_mod\n",
+        "import ts_mini.baseline as base_mod\n",
+        "import ts_mini.holtwinters as hw_mod\n",
+        "import ts_mini.windowing as win_mod\n",
+        "\n",
+        "for mod, names in [(win_mod, ['buat_window', 'split_waktu', 'buat_window_multi']),\n",
+        "                   (base_mod, ['mae', 'rmse', 'smape', 'forecast_naive',\n",
+        "                               'forecast_seasonal_naive', 'forecast_ham']),\n",
+        "                   (ar_mod, ['fit_ar', 'ar_forecast']),\n",
+        "                   (hw_mod, ['holt_winters_add', 'holt_winters_mult'])]:\n",
+        "    for nama in names:\n",
+        "        setattr(mod, nama, getattr(ref, nama))\n",
+        "print('ts_mini di-patch dengan implementasi referensi.')\n",
+    ),
+    md(
+        "## Kunci Implementasi",
+        "",
+        "### AR — konvensi lag & forecast rekursif",
+    ),
+    code(
+        "print(inspect.getsource(ref.fit_ar))\n",
+        "print(inspect.getsource(ref.ar_forecast))\n",
+    ),
+    md(
+        "**Poin kunci:** baris fitur = `[y[i+p-1], ..., y[i]]` (lag-1 dulu) sehingga",
+        "`coef[0]` mengalikan nilai TERBARU; di forecast, histori dibalik dulu",
+        "(`hist[0]` = terbaru), prediksi masuk ke depan antrean — error menumpuk dari sini.",
+    ),
+    md("### Holt-Winters — urutan update level → trend → season"),
+    code(
+        "print(inspect.getsource(ref.holt_winters_add))\n",
+        "print(inspect.getsource(ref.holt_winters_mult))\n",
+    ),
+    md(
+        "**Poin kunci:** loop mulai `i = m` (satu siklus penuh untuk inisialisasi);",
+        "`lv_old` diambil SEBELUM level diperbarui; multiplikatif pakai `eps = 1e-8` di",
+        "semua pembagi; forecast memakai `seas[n - m + (j % m)]` — musiman terakhir diulang.",
+    ),
+    md("## Jalankan Alur Eksperimen Lengkap (angka solusi)"),
+    code(*SETUP),
+    code(*LIHAT_DATA),
+    code(*WINDOWING),
+    code(*BASELINE),
+    code(*AR_PART),
+    code(*HW_PART),
+    code(*BACKTEST_PART),
+    code(*RINGKASAN),
+    md("## Jawaban Pertanyaan Analisis (bandingkan dengan versimu)"),
+    md(
+        "**1. Mekanisme leakage split acak.** Dengan split acak, tetangga terdekat sebuah",
+        "window val adalah window train yang HAMPIR BERDETEKAN dengannya di waktu nyata",
+        "(hari 849 dekat hari 848). Model 1-NN \"menghafal\" jawaban yang sudah pernah",
+        "dilihat; di produksi (prediksi masa depan sungguhan) tetangga itu tidak ada.",
+        "Angka yang lebih rendah mengukur kemampuan menghafal, bukan meramal. Gejala",
+        "saudaranya: in-sample pdq 6.41 vs out-of-sample 11.76 (lab Bagian 6).",
+        "",
+        "**2. Error rekursif menumpuk.** 7 langkah pertama masih \"dikoreksi\" nilai asli",
+        "terakhir di histori (APE 1.9%). Setelah itu prediksi jadi input: bias arah",
+        "trend/musiman terakumulasi, forecast kehilangan pola (lihat plot AR vs aktual),",
+        "MAE melampaui naive. Klaim \"model bagus\" tanpa menyebut horizon = iklan palsu;",
+        "selalu laporkan \"bagus pada h = ?\".",
+        "",
+        "**3. AR vs musiman panjang.** AR(365) butuh 365 lag → 365 parameter + kehilangan",
+        "365 baris data, dan OLS jadi tidak stabil. Trend+dummies menyelesaikan musiman",
+        "dengan 365 dummy + 2 kolom [1, t]: fit mudah, tapi 365 parameter mengunci noise",
+        "train — in-sample 6.41 vs out-of-sample 11.76. Biayanya: overfit parameter",
+        "musiman; solusi modern (HW) meramal musiman dengan m angka smoothing saja.",
+        "",
+        "**4. Memutuskan aditif vs multiplikatif.** Di eksperimen kita mult menang di",
+        "KEDUA seri — tapi karena alasan berbeda: di seri aditif (21.0 vs 16.4) selisihnya",
+        "datang dari redaman drift trend oleh rasio, di seri multiplikatif (16.5 vs 12.9)",
+        "dari bentuk amplitudo yang memang ikut level. Tanpa resep: (a) plot seri —",
+        "amplitudo membesar saat level naik → multiplikatif (atau log1p dulu);",
+        "(b) paling aman: backtest KEDUA versi di train folds, pilih mean MAE terendah.",
+        "Keputusan dari data, bukan dari teks buku.",
+        "",
+        "**5. Mean backtest menipu.** Naive mean 10.33 \"terbaik\", tapi fold-2-nya 20.98 —",
+        "fold itu jatuh di lembah musiman sehingga garis datar meleset jauh. Artinya",
+        "naive rapuh pada fase siklus; HW stabil antar fold (11.2/23.3/14.9 — variasi",
+        "lebih kecil relatif terhadap level kesulitan fold). Laporkan mean + max + sebaran",
+        "(atau median), dan pilih model yang TIDAK ada fold-nya yang meledak.",
+        "",
+        "**6. Drift & MLOps.** Pipeline yang dijalankan ulang berkala: rolling backtest",
+        "dengan data terbaru (angka: mean MAE per fold), monitoring error live (MAE",
+        "rolling produksi vs backtest — menyimpang jauh = drift), dan pemicu retraining.",
+        "Data/seed/split dikunci ulang setiap evaluasi supaya angka antar periode",
+        "sebanding (prinsip kunci data di cheatsheet §9).",
+    ),
+    md(
+        "---",
+        "",
+        "Selanjutnya: isi `RUBRIK.md` dengan angka-mu sendiri (bukan angka notebook ini),",
+        "lalu lanjut ke Bab 8 (ML Produksi).",
+    ),
+]
+
+tulis("starter.ipynb", starter)
+tulis("solusi.ipynb", solusi)

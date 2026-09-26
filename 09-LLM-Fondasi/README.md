@@ -2,6 +2,15 @@
 
 > Bab pertama jalur AI Engineering. Semua yang Anda pelajari di Bab 4 & 6 (backprop, embedding, next-token prediction) menyatu di sini menjadi satu arsitektur: **Transformer**.
 
+## 🗺️ Urutan Belajar Bab Ini
+
+1. Baca materi inti di bawah (±2 jam) — fokus pada intuisi Q/K/V dan BPE.
+2. Kerjakan **lab** — semuanya dibangun dari nol dengan numpy (±3 jam).
+3. Uji diri dengan **kuis** (10 soal, 22 poin, skor otomatis).
+4. Bandingkan jawaban dengan **kunci** — baca bagian *kenapa*.
+5. Bangun **project starter** (TDD, 76 test) — tokenizer + mini-LM end-to-end.
+6. Review cepat dengan **cheatsheet** sebelum lanjut ke Bab 10.
+
 ## 🎯 Tujuan Belajar
 - Memahami self-attention secara intuisi dan matematis ringan.
 - Tokenisasi subword (BPE) dan kenapa "strawberry" punya 3 huruf r.
@@ -333,9 +342,10 @@ print(f"Estimasi biaya bulanan: ${daily_cost * 30:.2f}")
 
 ## 2. Latihan Praktis
 
----
+> Latihan penuh (bertahap, dengan cek otomatis) ada di `01_lab_llm_fondasi.ipynb`.
+> Ringkasannya:
 
-### Latihan 1: Perhitungan Attention Manual
+### Latihan 1: BPE dari Nol
 
 **Tujuan:** Pahami apa yang terjadi di balik self-attention dengan menghitung manual.
 
@@ -452,6 +462,9 @@ print("Token 3 hanya lihat token 0-3:     ", attn_dec[3].round(3))
 
 ### Latihan 2: Tokenization Comparison
 
+> 💡 Jalankan lab Bagian 1 dulu — setelah membangun BPE sendiri, tabel rasio
+> token/kata di latihan ini terasa jauh lebih bermakna.
+
 **Tujuan:** Pahami perbedaan tokenization dan dampaknya terhadap biaya.
 
 ```python
@@ -534,6 +547,9 @@ for lang, ratio in estimations.items():
 ---
 
 ### Latihan 3: Mini Next-Token Prediction Model
+
+> 💡 Versi numpy murni dari model ini ada di lab Bagian 6 (tanpa PyTorch, tanpa
+> GPU) — kerjakan di sana kalau environment-mu belum terpasang PyTorch.
 
 **Tujuan:** Implementasi forward pass sederhana GPT-style.
 
@@ -678,13 +694,31 @@ print(f"Generated length: {generated.shape[1]} token")
 
 ---
 
+## 🧰 Materi Pendukung (Folder Ini)
+
+| File | Apa | Kapan Dipakai |
+|---|---|---|
+| `01_lab_llm_fondasi.ipynb` | Lab praktikum: 8 bagian — BPE dari nol (merge + encode kata baru), embedding yang belajar struktur (cosine), konteks window & mean pooling, positional encoding (properti `PE_p·PE_q = f(p−q)`), self-attention + causal mask, mini-LM (loss 1.386 → <0.5), sampling greedy/top-k/top-p | Kerjakan setelah baca materi inti |
+| `02_kuis_llm_fondasi.ipynb` | 10 soal (6 PG + 4 coding), 22 poin, skor otomatis | Setelah lab selesai |
+| `03_kunci_jawaban_kuis_llm_fondasi.ipynb` | Kunci + intuisi di balik tiap jawaban | HANYA setelah mencoba kuis |
+| `cheatsheet-llm-fondasi.md` | Rumus kunci + pola kode + koneksi ke bab lain | Review harian / sebelum kuis |
+| `project-starter-tokenizer-mini/` | Proyek end-to-end: BPE trainer + tokenizer (vocab, round-trip) + embedding + PE + attention + mini-LM + sampling (TDD, 76 test) + starter/solusi + RUBRIK | Setelah kuis ≥ 17/22 |
+
+> File `_gen_*.py`, `_verify_*.py` = skrip generator/verifier internal (angka di
+> notebook terkunci seed & terverifikasi otomatis). Tidak perlu dibuka untuk
+> belajar, tapi silakan baca kalau ingin melihat cara materinya dikalibrasi.
+
+---
+
 ## ✅ Checklist Kompetensi
 
 - [ ] Menjelaskan self-attention dengan contoh kalimat konkret
 - [ ] Membedakan BERT vs GPT dan use case-nya
 - [ ] Menghitung estimasi biaya permintaan dari jumlah token
-- [ ] Implementasi self-attention manual dengan NumPy/PyTorch
-- [ ] Paham perbedaan tokenization bahasa Indonesia vs Inggris
+- [ ] Melatih BPE mini dan meng-encode kata yang tidak ada di corpus
+- [ ] Menjelaskan kenapa `sqrt(d_k)` wajib (varians skor → softmax satu-hot)
 - [ ] Bisa jelaskan mengapa causal mask penting untuk decoder
-- [ ] Visualisasikan attention matrix dan jelaskan patternnya
-- [ ] Implementasi mini GPT forward pass (minimal)
+- [ ] Menunjukkan properti `PE_p · PE_q = f(p−q)` dari positional encoding buatanmu
+- [ ] Melatih mini-LM: loss turun dari ln(vocab) dan memprediksi token berikutnya
+- [ ] Menjelaskan efek temperature & memilih top-k/top-p untuk kasus tertentu
+- [ ] Implementasi self-attention manual dengan NumPy (tanpa melihat catatan)

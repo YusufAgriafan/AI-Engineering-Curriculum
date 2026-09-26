@@ -1,773 +1,471 @@
 # Bab 11 — Bekerja dengan LLM API & Orkestrasi
 
-> Dari "prompt di playground" ke "kode produksi yang tangguh": API, streaming, structured output, fallback, dan biaya.
+> Dari "prompt yang jalan di playground" ke "kode yang bertahan saat provider
+> gagal": biaya yang bisa dihitung sebelum memanggil, retry yang tahu kapan
+> berhenti, fallback yang sadar harga, cache yang tidak membayar dua kali, dan
+> pipeline yang bisa diaudit per langkah.
 
 ## 🎯 Tujuan Belajar
-- Memakai SDK LLM dengan benar: system/user, streaming, tool calling.
-- Structured output (JSON) yang tahan gagal.
-- Pola produksi: retry, fallback antar-provider, caching, rate limit.
-- Mengelola biaya & latensi.
 
-## 1. Materi Inti
+- Memanggil LLM API dengan benar: peran pesan, parameter, timeout, API key dari
+  environment — dan tahu **kapan** streaming dipakai.
+- Menghitung **biaya & anggaran** sebelum memanggil, lalu menegakkannya sebagai
+  fitur produk (melewati pekerjaan, bukan memaksa jalan).
+- Menjalankan **retry yang berdisiplin**: membedakan galat transien vs fatal,
+  menjadwalkan backoff, dan tidak menunggu setelah percobaan terakhir.
+- Merancang **fallback chain multi-provider** dan mengukur apa yang dikorbankan
+  (kualitas, konsistensi) demi ketersediaan.
+- Merancang **cache yang tidak berbohong**: kunci lengkap, TTL, dan hit-rate yang
+  dipisahkan dari expired.
+- Mengukur **TTFT** vs total latency, dan memutuskan streaming berdasarkan itu.
+- Mengimplementasikan **function calling** dengan validasi argumen di kode kita,
+  plus batas iterasi yang wajib.
+- Memecah satu tugas besar menjadi **pipeline** berlangkah dengan laporan biaya,
+  latency, dan attempts per langkah.
 
-> Dari "prompt di playground" ke "kode produksi yang tangguh": API, streaming, structured output, fallback, dan biaya.
+## 🗂️ Materi Pendukung Bab Ini
+
+| Materi | File | Isi |
+|---|---|---|
+| 🧪 Lab | [`01_lab_llm_api.ipynb`](01_lab_llm_api.ipynb) | 8 bagian: provider palsu & rencana kegagalan → biaya & anggaran → retry/backoff → fallback → cache → streaming → tools → pipeline |
+| 📝 Kuis | [`02_kuis_llm_api.ipynb`](02_kuis_llm_api.ipynb) | 10 soal (6 PG + 4 coding), 22 poin, dinilai otomatis, **mandiri** (tanpa jaringan) |
+| 🔑 Kunci | [`03_kunci_jawaban_kuis_llm_api.ipynb`](03_kunci_jawaban_kuis_llm_api.ipynb) | Jawaban + **kenapa**, kode referensi tiap soal coding |
+| 🏗️ Project | [`project-llmkit/`](project-llmkit/README.md) | Paket `llmkit` TDD **107 test**: cost, retry, fallback, cache, stream, tools, pipeline + 2 notebook |
+| 📄 Cheatsheet | [`cheatsheet-llm-api.md`](cheatsheet-llm-api.md) | Ringkas 1 halaman untuk review cepat |
+
+Materi lab & project **tanpa API key**: "provider" diganti
+`project-llmkit/llmkit/transport.py` — provider palsu deterministik yang bisa
+**disuruh gagal** (`rate_limit` di panggilan ke-1, `server_error` di ke-2, pulih
+di ke-3). Angka terkunci seed 11 dan sudah diverifikasi otomatis
+(`_verify_lab.py`, `_verify_quiz.py`, `project-llmkit/_verify_project.py`).
 
 ---
 
-### 1.1 Memanggil LLM — Dasar yang Wajib Paham
+## 1. Materi Inti
+
+### 1.1 Peta Lapisan: Panggilan API Itu Bagian Terkecil
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  APLIKASI         produk, endpoint, kuota per tenant          │
+├───────────────────────────────────────────────────────────────┤
+│  ORKESTRASI       prompt chaining, laporan per langkah (§1.10)│
+├───────────────────────────────────────────────────────────────┤
+│  KEAMANAN/TOOLS   validasi argumen, least-privilege (§1.9)    │
+├───────────────────────────────────────────────────────────────┤
+│  TAHAN GAGAL      retry (§1.5) · fallback (§1.6)              │
+├───────────────────────────────────────────────────────────────┤
+│  EFISIENSI        cache (§1.7) · anggaran (§1.3)              │
+├───────────────────────────────────────────────────────────────┤
+│  PANGGILAN        client.chat.completions.create(...)  ← §1.2 │
+└───────────────────────────────────────────────────────────────┘
+```
+
+Baris paling bawah biasanya bagian termudah — dan paling sedikit baris kodenya.
+Sisa bab ini tentang lapisan di atasnya, karena **itulah yang membedakan prototipe
+dari sistem**.
+
+Bab ini melatih lapisan tengah dengan provider palsu yang deterministik (mereka
+diuji tepat di titik kegagalannya), lalu menunjukkan bentuknya pada provider
+nyata.
+
+---
+
+### 1.2 Anatomi Satu Panggilan
 
 ```python
 import os
 from openai import OpenAI
 
-# ⚠️ PENTING: API key dari environment variable, JANGAN hardcode!
-# Kalau nggak tahu caranya:
-#   export OPENAI_API_KEY="sk-..."
-#   atau pakai .env + python-dotenv
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])   # JANGAN hardcode
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY"),
-    # base_url opsional: kalau pakai proxy atau provider alternatif
-)
-
-# Basic call
 response = client.chat.completions.create(
-    model="gpt-4o-mini",       # pilih model sesuai kebutuhan & budget
+    model="gpt-4o-mini",              # pilih per tugas, bukan per gengsi
     messages=[
-        {"role": "system", "content": "Kamu adalah asisten yang membantu. Jawab ringkas dan akurat."},
-        {"role": "user", "content": " Jelaskan apa itu machine learning dalam 2 kalimat."},
+        {"role": "system", "content": "Kamu asisten yang menjawab ringkas dan akurat."},
+        {"role": "user",   "content": "Jelaskan apa itu machine learning dalam 2 kalimat."},
     ],
-    temperature=0.2,           # 0.0 = deterministik, tinggi = lebih kreatif
-    max_tokens=500,            # batasi output agar tidak boros
+    temperature=0.0,                  # ekstraksi/klasifikasi: 0–0.2
+    max_tokens=500,                   # batasi output = batasi biaya
+    timeout=30,                       # timeout per request
 )
-
 print(response.choices[0].message.content)
-
-# Simpan metadata untuk logging/monitoring
-print(f"\nMetadata:")
-print(f"  Model: {response.model}")
-print(f"  Usage: {response.usage}")
-print(f"  Id: {response.id}")
+print(response.usage)                 # prompt_tokens, completion_tokens
 ```
 
-#### Semua Provider Pakai Pola yang Sama
+| Peran | Isi | Aturan yang tidak boleh dilanggar |
+|---|---|---|
+| `system` | aturan, persona, format output, larangan | **jangan pernah** menyambung data pengguna ke sini |
+| `user` | permintaan + data tak tepercaya | bungkus dengan delimiter + leash (Bab 10 §1.6) |
+| `assistant` | jawaban sebelumnya / `tool_calls` | jadi bukti tool sudah dipanggil (§1.9) |
+| `tool` | hasil eksekusi tool | `tool_call_id` harus cocok dengan usulan model |
 
-| Provider | SDK | Model contoh | Keterangan |
-|---|---|---|---|
-| OpenAI | `openai` | gpt-4o, gpt-4o-mini, o1 | Standar industri; dokumentasi paling lengkap |
-| Anthropic | `anthropic` | claude-3-opus, claude-3-5-sonnet | Fokus pada AI safety; output cenderung lebih terstruktur |
-| Google | `google-genai` | gemini-1.5-pro, gemini-2.0-flash | Multimodal native, context window besar (1M+ token) |
-| DeepSeek | `deepseek` | deepseek-chat, deepseek-reasoner | Cost-effective, performa kompetitif |
+Semua provider memakai pola yang sama (OpenAI, Anthropic, Gemini, DeepSeek);
+LiteLLM menyeragamkan antarmukanya. **API key selalu dari environment variable** —
+`.env` masuk `.gitignore`, dan rotasi kunci kalau pernah ter-commit.
 
-**Provider-agnostic:** [LiteLLM](https://docs.litellm.ai/) — satu interface untuk semua provider.
+> Di lab & project, "client" ini digantikan `ProviderPalsu`. Ia mengembalikan
+> metadata yang sama (`tokens_in`, `tokens_out`, `latency_ms`) sehingga **seluruh
+> kode lapisan atas di bawah ini bisa diuji tanpa jaringan**.
 
 ---
 
-### 1.2 Streaming — UX yang Lebih Baik
+### 1.3 Biaya & Anggaran: Hitung Sebelum Memanggil
 
 ```python
-# Tanpa streaming: user nunggu sampai output lengkap baru muncul
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Tulis artikel tentang AI"}],
-    max_tokens=2000,
-)
-print(response.choices[0].message.content)  # Muncul sekaligus
+def token_estimasi(teks):                      # cukup untuk ANGGARAN, bukan tagihan
+    return int(math.ceil(len(str(teks)) / 4.0))
 
-# Dengan streaming: token muncul bertahap → UX lebih responsif
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Tulis artikel tentang AI"}],
-    max_tokens=2000,
-    stream=True,          # ← streaming ON
-)
-
-print("Streaming output:")
-for chunk in response:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="", flush=True)
-print()  # newline di akhir
+def hitung_biaya(tokens_in, tokens_out, model, harga):
+    t = harga[model]                           # USD per 1 JUTA token
+    return tokens_in / 1e6 * t["input"] + tokens_out / 1e6 * t["output"]
 ```
 
-**Kapan pakai streaming:**
+Angka terkunci (lab Bagian 1): `hitung_biaya(1000, 300, ...)` → `mini` **$0.00033**
+vs `besar` **$0.0095** — **~29x**. Model besar bukan "lebih baik"; ia kategori
+harga lain.
 
-- Chat interface / CLI chatbot → harusnya streaming!
-- Output panjang (artikel, kode, analisis) → user tidak perlu nunggu 10 detik
-- Task singkat (< 100 token) → nggak perlu streaming, malah lebih rumit
+Anggaran harus **ditegakkan di kode**, bukan diingat:
+
+```python
+def jalankan_anggaran(provider, daftar_pesan, batas_usd, model="mini"):
+    diproses, dilewati, total, berhenti_di = 0, 0, 0.0, None
+    for i, pesan in enumerate(daftar_pesan):
+        if total >= batas_usd:                 # ← STOP MEMANGGIL, bukan "paksa jalan"
+            berhenti_di = i if berhenti_di is None else berhenti_di
+            dilewati += 1
+            continue
+        r = provider.panggil(model, pesan)
+        total += hitung_biaya(r["tokens_in"], r["tokens_out"], model)
+        diproses += 1
+    return {"diproses": diproses, "dilewati": dilewati,
+            "total_biaya_usd": total, "berhenti_di": berhenti_di}
+```
+
+Angka terkunci: anggaran kecil untuk 4 pekerjaan → `diproses 3 | dilewati 1 |
+berhenti_di 3`, total `4.005e-05`, biaya per hasil `1.335e-05`.
+
+**Lima cara menekan biaya** (urut dampak):
+
+| Cara | Potensi | Catatan |
+|---|---|---|
+| Model yang tepat | 5–50x | task mudah jangan pakai model besar |
+| Kurangi token input | 2–10x | retrieval tepat (Bab 12), prompt ringkas, cache |
+| Kurangi token output | 2–5x | `max_tokens`, minta output padat |
+| Cache respons | 10–100x untuk query berulang | §1.7 |
+| Routing per tingkat kesulitan | 3–20x | classifier kecil memilih model |
 
 ---
 
-### 1.3 Structured Output (JSON) — Wajib untuk Production
+### 1.4 Structured Output di API Nyata
+
+Bab 10 melatih parse → validasi → retry dengan mock. Di API nyata, tambahkan
+jaminan dari provider:
 
 ```python
 from pydantic import BaseModel, Field
-from typing import Optional
 
-# Definisi schema output
-class SentimentResult(BaseModel):
-    label: str = Field(..., description="Sentimen: positive/negative/neutral")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Keyakinan klasifikasi")
-    reasons: list[str] = Field(default_factory=list, description="Alasan di balik sentimen")
-    language: str = Field(default="id", description="Bahasa teks")
+class Sentimen(BaseModel):
+    label: str = Field(..., description="positive/negative/neutral")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    alasan: list[str] = Field(default_factory=list)
 
-# Prompt dengan instruksi JSON schema
-prompt = f"""
- analiz themes sentiment dari teks berikut.
-Return output dalam format JSON yang sesuai dengan schema berikut:
-
-Output Schema:
-- label: string, values = [positive, negative, neutral]
-- confidence: float 0.0-1.0
-- reasons: array of strings, alasan utama
-- language: string, bahasa teks
-
-Teks yang harus dianalisis:
-{text}
-
-Format output: JSON object sesuai schema di atas.
-"""
-
-# Kalau pakai OpenAI, bisa panggil dengan response_format
-response = client.chat.completions.create(
+resp = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": prompt}],
-    response_format={"type": "json_object"},  # ← minta JSON
-    temperature=0.0,  # deterministic untuk structured output
+    response_format={"type": "json_object"},   # atau json_schema ketat
+    temperature=0.0,
 )
-
-result_json = response.choices[0].message.content
-
-# Validasi dengan pydantic
 try:
-    result = SentimentResult.model_validate_json(result_json)
-    print(f"Validasi berhasil!")
-    print(f"  Label: {result.label}")
-    print(f"  Confidence: {result.confidence}")
-    print(f"  Reasons: {result.reasons}")
+    hasil = Sentimen.model_validate_json(resp.choices[0].message.content)
 except Exception as e:
-    print(f"Output tidak valid: {e}")
-    # Retry dengan pesan error yang informatif
-    retry_prompt = f"""
-    Output sebelumnya tidak valid: {e}
-    
-    Teks asli: {text}
-    
-    Silakan coba lagi dengan format JSON yang benar.
-    """
+    # self-healing loop: kirim error skema kembali ke model (maks 1–2 kali)
+    ...
 ```
 
-> **Self-healing loop:** Kalau output tidak valid, kirim pesan error ke model + minta perbaiki. Bisa loop beberapa kali sebelum gagal total.
+Empat lapis tetap sama seperti Bab 10, hanya titiknya bergeser:
 
----
-
-### 1.4 Tool/Function Calling
-
-> Dasar dari agent (Bab 14): model bisa memilih panggil fungsi, kode yang mengeksekusi.
-
-```python
-# Definisi function/tool
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "Dapatkan cuaca untuk kota tertentu",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "city": {
-                        "type": "string",
-                        "description": "Nama kota, contoh: 'Jakarta', 'Surabaya'"
-                    },
-                    "unit": {
-                        "type": "string",
-                        "enum": ["celsius", "fahrenheit"],
-                        "description": "Satuan suhu"
-                    }
-                },
-                "required": ["city"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Melakukan kalkulasi matematika",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Ekspresi matematika, contoh: '2+3*4'"
-                    }
-                },
-                "required": ["expression"]
-            }
-        }
-    }
-]
-
-# Pesan ke model
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Berapa suhu Jakarta hari ini?"}],
-    tools=tools,
-    tool_choice="auto",  # model pilih apakah perlu call tool
-)
-
-# Handle response
-message = response.choices[0].message
-
-if message.tool_calls:
-    for tool_call in message.tool_calls:
-        function_name = tool_call.function.name
-        arguments = json.loads(tool_call.function.arguments)
-        
-        print(f"Model mau memanggil: {function_name}")
-        print(f"Arguments: {arguments}")
-        
-        # Eksekusi fungsi (di sini dummy)
-        if function_name == "get_weather":
-            result = {"temperature": 28, "condition": "cerah", "unit": arguments.get("unit", "celsius")}
-        elif function_name == "calculate":
-            result = {"result": eval(arguments["expression"])}
-        
-        # Kirim kembali hasil ke model
-        second_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "user", "content": "Berapa suhu Jakarta hari ini?"},
-                message,  # assistant message dengan tool call
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(result)
-                }
-            ],
-        )
-        print(f"\nFinal response: {second_response.choices[0].message.content}")
-else:
-    print(f"Model menjawab langsung: {message.content}")
+```
+1. PROMPT        : skema field + "balas JSON saja"
+2. PROVIDER      : response_format / json_schema  ← jaminan tambahan, bukan pengganti
+3. PARSER        : ekstrak_json (jaring pengaman untuk output kotor)
+4. VALIDATOR+RETRY: skema + pesan error yang informatif -> model memperbaiki
 ```
 
 ---
 
-### 1.5 Pola Produksi Wajib
+### 1.5 Retry & Backoff: Dua Keputusan, Bukan Satu Loop
 
-#### Retry + Backoff
+```
+JENIS_TRANSIEN = ("rate_limit", "server_error", "timeout")   → ulangi
+bad_request / model tidak ada / skema salah                  → LEMPAR sekarang
+```
 
 ```python
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import openai
-
-@retry(
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=2, max=60),
-    retry=retry_if_exception_type((
-        openai.RateLimitError,
-        openai.APIConnectionError,
-        openai.APIError,
-    )),
-    before_sleep=lambda retry_state: print(f"Retry {retry_state.attempt_number}...")
-)
-def call_llm_with_retry(**kwargs):
+@retry(stop=stop_after_attempt(4),
+       wait=wait_exponential(multiplier=1, min=1, max=8),
+       retry=retry_if_exception_type((RateLimitError, APIConnectionError, APIError)))
+def panggil(**kwargs):
     return client.chat.completions.create(**kwargs)
-
-# Pakai fungsinya
-response = call_llm_with_retry(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Halo"}],
-)
 ```
 
-#### Timeout & Budget
+Kalau kamu menulisnya sendiri (seperti di project), urutannya wajib persis:
 
-```python
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Tulis artikel panjang tentang AI"}],
-    max_tokens=1000,      # ← batasi output
-    timeout=30,           # ← timeout per request
-)
-
-# Log & budget tracking
-import logging
-logger = logging.getLogger(__name__)
-
-logger.info(
-    "LLM request completed",
-    extra={
-        "model": response.model,
-        "input_tokens": response.usage.prompt_tokens,
-        "output_tokens": response.usage.completion_tokens,
-        "latency_ms": response.usage.completion_tokens_details?,  # tergantung SDK
-        "cost_estimate": estimate_cost(response.usage),
-    }
-)
 ```
-
-#### Fallback Chain
-
-```python
- FallbackChain:
-  Model utama (gpt-4o)         → kalau gagal/error → lanjut
-  Model cadangan (gpt-4o-mini) → kalau gagal/error → lanjut
-  Model fallback (claude-3-haiku) → kalau gagal/error → return error
+1. panggil provider
+2. catat (percobaan, jenis) ke riwayat
+3. galat FATAL?           -> raise SEKARANG
+4. percobaan TERAKHIR?    -> raise GalatSemuaPercobaan  (JANGAN menunggu dulu)
+5. sisanya                -> sleep(backoff(percobaan)) lalu ulangi
 ```
 
 ```python
-FALLBACK_MODELS = [
-    {"provider": "openai", "model": "gpt-4o"},
-    {"provider": "openai", "model": "gpt-4o-mini"},
-    {"provider": "anthropic", "model": "claude-3-haiku"},
-]
+def backoff_ms(percobaan, basis_ms=1000, faktor=2, maks_ms=8000):
+    return min(basis_ms * faktor ** (percobaan - 1), maks_ms)   # [1000,2000,4000,8000,8000]
+```
 
-def call_with_fallback(messages, max_tokens=500):
-    last_error = None
-    
-    for i, config in enumerate(FALLBACK_MODELS):
+Angka terkunci: `sedang` gagal sekali → `attempts 2`, tunggu `[1000]`, latency
+240 ms → `total_ms` **1240 ms**. `bad_request` → **1 panggilan** (tidak diulang).
+
+Dua hal yang sering lupa di produksi:
+
+- **`sleep_fn` disuntik** — supaya test cepat; jalur produksi memakai `time.sleep`.
+- **Jitter** — `jeda + rng.randint(0, jeda // 4)`; tanpa itu ribuan klien bangun
+  bersamaan (thundering herd) dan memukul ulang provider di detik yang sama.
+- **Circuit breaker** — kalau provider sedang down total, berhenti mencoba lebih
+  murah daripada mencoba terus.
+
+---
+
+### 1.6 Fallback Chain & Routing Model
+
+```python
+RANTAI = [{"provider": "utama",    "model": "besar"},     # kualitas dulu
+          {"provider": "utama",    "model": "mini"},      # kompromi
+          {"provider": "cadangan", "model": "murah"}]     # ketersediaan
+
+def panggil_dengan_fallback(providers, rantai, messages, settings=None):
+    for i, tautan in enumerate(rantai):
+        setelan = {**(settings or {}), **tautan.get("settings", {})}
         try:
-            print(f"Trying model {i+1}/{len(FALLBACK_MODELS)}: {config['model']}")
-            response = call_llm(FALLBACK_MODELS[i], messages, max_tokens)
-            return response
-        except Exception as e:
-            last_error = e
-            logger.warning(f"Model {config['model']} gagal: {e}")
+            hasil = panggil_dengan_retry(providers[tautan["provider"]],
+                                        tautan["model"], messages, **setelan)
+        except GalatAPI as e:
+            dicoba.append({..., "jenis": e.jenis})       # ← BEKAS KEGAGALAN DICATAT
             continue
-    
-    raise Exception(f"Semua model gagal: {last_error}")
+        hasil["dicoba"], hasil["lompatan"] = dicoba, i    # ← audit turun-kualitas
+        return hasil
+    raise GalatSemuaPercobaan(riwayat)
 ```
 
-#### Caching
+Angka terkunci: `besar` gagal dua kali (`rate_limit` + `server_error`), rantai
+menang di tautan ke-1 (`mini`); `dicoba` mencatat `(besar, semua_gagal)` lalu
+`(mini, success)`. Rasio biaya `besar`:`mini` ≈ **26x**.
 
-```python
-import functools
-import hashlib
-import json
-
-# Cache sederhana dengan hash dari prompt + paramet
-@functools.lru_cache(maxsize=1000)
-def cached_llm_call(model: str, prompt_hash: str, temperature: float):
-    """Wrapper yang cache response berdasarkan hash dari prompt."""
-    # Implementasi: simpan ke dict atau Redis
-    pass
-
-def hash_prompt(prompt: str, **params) -> str:
-    """Buat hash dari prompt + parameter."""
-    content = json.dumps({"prompt": prompt, "params": params}, sort_keys=True)
-    return hashlib.sha256(content.encode()).hexdigest()[:16]
-
-# Usage
-prompt_hash = hash_prompt(" Jelaskan AI", temperature=0.2, model="gpt-4o-mini")
-# Kalau hash sudah ada di cache → return cached response
-# Kalau belum → call API, simpan ke cache
-```
+Yang dibayar: kualitas penalaran & **konsistensi output**. Untuk tugas yang
+hasilnya diparse/dibandingkan (JSON ber-skema, skor), ganti model di tengah jalan
+adalah sumber regresi — kadang **error 503 + retry di sisi klien lebih jujur**
+daripada hasil yang tampak sukses tapi beda kualitas.
 
 ---
 
-### 1.6 Biaya & Latensi
+### 1.7 Cache: Kunci Lengkap, TTL Logis
 
-#### Hitung Biaya
-
-```python
-def estimate_cost(input_tokens: int, output_tokens: int, model: str = "gpt-4o-mini") -> dict:
-    """Estimasi biaya API LLM."""
-    pricing = {
-        "gpt-4o-mini":  {"input": 0.150, "output": 0.600},   # per 1M tokens
-        "gpt-4o":      {"input": 5.000, "output": 15.000},
-        "claude-3-opus": {"input": 15.000, "output": 75.000},
-        "gemini-1.5-pro": {"input": 1.250, "output": 5.000},
-        "deepseek-chat": {"input": 0.140, "output": 0.280},
-    }
-    
-    rates = pricing.get(model, pricing["gpt-4o-mini"])
-    
-    input_cost = (input_tokens / 1_000_000) * rates["input"]
-    output_cost = (output_tokens / 1_000_000) * rates["output"]
-    
-    return {
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "input_cost_usd": round(input_cost, 6),
-        "output_cost_usd": round(output_cost, 6),
-        "total_usd": round(input_cost + output_cost, 6),
-    }
-
-# Contoh
-usage = {"input_tokens": 1500, "output_tokens": 300}
-cost = estimate_cost(**usage, model="gpt-4o-mini")
-print(f"Estimasi biaya per request: ${cost['total_usd']:.6f}")
-
-# Estimasi bulanan
-requests_per_day = 1000
-avg_cost_per_request = cost["total_usd"]
-monthly_estimate = avg_cost_per_request * requests_per_day * 30
-print(f"Estimasi biaya bulanan: ${monthly_estimate:.2f}")
+```
+kunci = sha256(model + messages + params)[:16]
+       + (produksi) versi prompt · konteks retrieval (Bab 12) · tenant id
+hit ≠ expired      -> keduanya menghasilkan "tidak ada cache", tapi artinya berbeda
 ```
 
-#### 3 Cara Mengecilkan Biaya
+```python
+def ambil(self, kunci, sekarang):
+    if kunci not in self._isi:
+        self.miss += 1
+        return None
+    hasil, tick = self._isi[kunci]
+    if sekarang - tick >= self.ttl:      # KEDALUWARSA ≠ MISS
+        self.expired += 1
+        del self._isi[kunci]
+        return None
+    self.hit += 1
+    return hasil
+```
 
-| Cara | Potensi Penghematan | Keterangan |
+Angka terkunci (tick 0,1,5,6 dengan `ttl=3`): pola `miss, hit, miss, hit`,
+`hit_rate 0.5` (hit 2, miss 1, expired 1), dan **4 permintaan = 2 panggilan
+provider**.
+
+TTL di sini memakai **tick logis** supaya bisa diuji deterministik — pola yang
+sama dipakai untuk test TTL produksi (tanpa `sleep`).
+
+Di produksi, lapisan berikutnya:
+
+| Tingkat | Cara kerja | Kapan |
 |---|---|---|
-| **1. Gunakan model yang tepat** | 5-50x | Task sederhana → gpt-4o-mini; task kompleks → gpt-4o. Jangan pakai model besar untuk tugas mudah. |
-| **2. Kurangi token input** | 2-10x | RAG dengan retrieval tepat (Bab 12), prompt yang lebih ringkas, cache untuk prompt berulang |
-| **3. Kurangi token output** | 2-5x | Batasi max_tokens, minta output yang lebih padat, streaming untuk UX tanpa perlu output panjang |
-| **4. Cache response** | 10-100x untuk query berulang | Cache FP untuk prompt identik; semantic cache untuk near-duplicate (Bab 11 - embedding similarity) |
-| **5. Route ke model yang tepat** | 3-20x | Classifier untuk routing: task mudah → model kecil; task sulit → model besar |
+| Tepat | hash identik (di atas) | retry, pengulangan eksak |
+| Semantic | embedding + ambang kemiripan | pertanyaan mirip-mirip (FAQ) |
+| Provider prompt cache | prefix prompt yang sama di-cache provider | system prompt panjang berulang |
 
 ---
 
-### 1.7 Ringkasan Cepat (1 Halaman)
+### 1.8 Streaming: TTFT vs Total
+
+```python
+stream = client.chat.completions.create(..., stream=True)
+for chunk in stream:
+    delta = chunk.choices[0].delta.content
+    if delta:
+        print(delta, end="", flush=True)
+```
+
+| Metrik | Artinya | Gunanya |
+|---|---|---|
+| **TTFT** | waktu sampai token pertama terlihat | persepsi responsif (UX) |
+| **total_ms** | sampai respons selesai | throughput & biaya |
+
+Angka terkunci: **TTFT 120 ms** dari **total 340 ms** (11 chunk) → pengguna melihat
+kata pertama ~65% lebih cepat, **total prosesnya identik**.
+
+Streaming **tidak** menghapus waktu tunggu, hanya memindahkannya. Kapan tidak
+layak: output JSON pendek yang baru berguna setelah utuh, batch/async yang tidak
+ditunggu manusia, atau parsing yang butuh hasil lengkap.
+
+---
+
+### 1.9 Function Calling: Model Mengusulkan, Kode Memutuskan
 
 ```
-🎯 Fokus Bab 11:
-  1. API call dasar: client.chat.completions.create()
-  2. Semua provider pakai pola mirip;LiteLLM = provider-agnostic
-  3. Streaming: token bertahap → UX lebih baik untuk output panjang
-  4. Structured output: JSON schema + pydantic validation + retry
-  5. Tool calling: model pilih function, kode eksekusi → dasar agent (Bab 14)
-  6. Produksi pattern: retry+backoff, timeout, fallback chain, cache
-  7. Biaya: hitung per request, estimasi bulanan, 5 cara menekan
+model -> tool_calls: [{id, nama, argumen}]        USULAN (data tak tepercaya)
+kode  -> validasi_argumen -> jalankan_tool         KEPUTUSAN
+kode  -> {role:'tool', tool_call_id, content}      OBSERVASI dikirim balik
 ```
+
+```python
+res = jalankan_tool(tc["nama"], tc["argumen"])
+if res["galat"]:
+    content = json.dumps({"galat": res["galat"]})     # error dikirim BALIK ke model
+else:
+    content = json.dumps(res["hasil"])
+```
+
+Aturan yang tidak boleh dilanggar:
+
+1. **Validasi dulu, eksekusi kemudian.** Error stabil: `missing:<k>`, `type:<k>`,
+   `tak_dikenal:<k>` (bahannya retry ke model).
+2. **Jangan pernah** `eval(argumen["expression"])`. Contoh di banyak tutorial
+   (termasuk versi awal README ini) adalah pintu RCE: model memegang kendali kode.
+3. **`maks_iterasi` wajib.** Agent tanpa batas = tagihan tanpa batas.
+4. **De-dup tool dari `tool_calls`**, bukan dari substring prompt. Prompt-mu sendiri
+   memuat kata kunci tool, jadi pengecekan teks akan selalu salah.
+5. **Log semua pemanggilan tool** — nama, argumen, hasil, siapa yang meminta.
+
+Angka terkunci: dua tool → **iterasi 3** (`['cari_catatan','hitung']`), tanpa tool →
+iterasi 1, `maks_iterasi=1` → `berhenti='maks_iterasi'` dan `jawaban=None`.
+
+> Ini fondasi agent (Bab 14). Bedanya nanti: jumlah tool, memori, dan sandboxing
+> (least-privilege) — bukan bentuk loop-nya.
+
+---
+
+### 1.10 Orkestrasi: Satu Tugas Besar → Langkah yang Bisa Diaudit
+
+```
+❌ satu prompt: "baca tiket, klasifikasi, ekstrak pesanan, tulis balasan, cek stok"
+✅ pipeline:
+   klasifikasi (mini,   T=0.0)   -> {intent}
+   ekstraksi   (mini,   T=0.0)   -> JSON
+   balasan     (sedang, T=0.4)   -> teks      ← satu-satunya yang butuh kreativitas
+```
+
+Angka terkunci (3 langkah, satu tiket):
+
+```
+langkah       model   attempts   total_ms   biaya
+klasifikasi   mini    1          184        1.530e-05
+ekstraksi     mini    1          187        1.545e-05
+balasan       sedang  2          1249       1.300e-04
+------------------------------------------------------
+total                           1620       1.6075e-04
+```
+
+Dengan `maks_percobaan=1`: `berhasil 2 | gagal 1`, langkah `balasan` melaporkan
+`galat='semua_gagal'` dan biaya `$0`. Itulah nilainya: **kegagalan terlokalisasi**
+dan alert bisa menyala di langkah yang benar — tanpa laporan per langkah kamu hanya
+tahu "totalnya lambat".
+
+Biayanya: lebih banyak panggilan (latency & token). Trade-off yang **diukur**,
+bukan dirasa.
+
+---
+
+### 1.11 Observability: Apa yang Wajib Dilog
+
+```python
+log = {
+  "request_id": ..., "tenant": ...,
+  "provider": "utama", "model": "mini",
+  "attempts": 2, "riwayat": [(1, "rate_limit")],
+  "fallback_lompatan": 1,                 # 0 = tautan pertama yang menang
+  "cache": "miss",                        # hit | miss | expired
+  "tokens_in": 13, "tokens_out": 19,
+  "biaya_usd": 1.335e-05, "total_ms": 1240,
+  "dipakai_retry": True,
+}
+```
+
+Tanpa angka-angka ini, kamu tidak bisa menjawab pertanyaan yang paling sering
+datang dari manajemen: *"biaya kita bulan ini naik kenapa?"* dan *"kenapa lambat
+untuk sebagian pengguna?"*. Bab 15 & 16 melanjutkan ini menjadi metrik yang
+dipantau terus-menerus dan kebijakan gateway (kuota per tenant).
+
+---
+
+### 1.12 Anti-Pattern
+
+| Anti-pattern | Gejala | Solusi |
+|---|---|---|
+| **Retry untuk semua galat** | `bad_request` diulang 5x | klasifikasikan transien vs fatal |
+| **Backoff tanpa batas atas** | percobaan ke-10 menunggu menit-an | `maks_ms` + jitter |
+| **Menunggu setelah percobaan terakhir** | jeda sia-sia sebelum error | cek urutan sebelum `sleep` |
+| **Kunci cache kurang lengkap** | jawaban basi / salah model | model+pesan+params+versi prompt+konteks+tenant |
+| **Fallback disembunyikan** | kualitas turun tanpa jejak | log `dicoba` & `lompatan` |
+| **Loop tool tanpa batas** | biaya/latensi tak terbatas | `maks_iterasi` + anggaran + timeout |
+| **`eval` argumen tool** | pintu RCE | skema → validasi → whitelist handler |
+| **API key hardcode** | kredensial bocor | env var + `.env` di-gitignore |
+| **Streaming untuk JSON pendek** | kompleksitas tanpa manfaat | streaming hanya untuk UX |
+| **Biaya tidak dihitung** | tagihan sebagai kejutan | `biaya_hasil` + penjaga anggaran |
+| **Satu prompt raksasa** | sulit dilokalisasi saat gagal | pipeline berlangkah (§1.10) |
+| **Tanpa timeout** | satu request menggantung di worker | timeout per request + total |
 
 ---
 
 ## 2. Latihan Praktis
 
----
+Materi latihan bab ini sudah lengkap sebagai file terpisah (lihat tabel di atas).
+Urutan yang disarankan:
 
-### Latihan 1: Summarizer API dengan Production Pattern
+1. **Lab** — [`01_lab_llm_api.ipynb`](01_lab_llm_api.ipynb): bangun delapan
+   komponen lapisan produksi dari nol di atas provider palsu yang bisa disuruh
+   gagal; selesaikan semua cell **✅ Cek** lalu jawab 6 pertanyaan analisis.
+2. **Kuis** — [`02_kuis_llm_api.ipynb`](02_kuis_llm_api.ipynb): 22 poin, dinilai
+   otomatis, **mandiri** (provider uji sudah disediakan). Baru setelah mencoba:
+   buka [kunci jawaban](03_kunci_jawaban_kuis_llm_api.ipynb).
+3. **Project** — [`project-llmkit/`](project-llmkit/README.md): paket `llmkit`
+   (107 test, mode TDD) + notebook eksperimen + `RUBRIK.md`.
 
-**Tujuan:** Bangun API yang robust dengan retry, timeout, structured output.
+Tiga latihan ringkas yang bisa dikerjakan tanpa notebook:
 
-```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-from typing import Optional
-import os
-import logging
-import time
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from openai import OpenAI, RateLimitError, APIConnectionError
-
-# Setup
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(title="Text Summarizer API")
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-# Schema
-class SummarizerRequest(BaseModel):
-    text: str = Field(..., min_length=10, max_length=10000, description="Teks yang akan dirangkum")
-    max_length: int = Field(default=150, ge=50, le=500, description="Panjang maksimal ringkasan")
-    language: str = Field(default="id", pattern="^[a-z]{2}$", description="Bahasa output (2 huruf)")
-    style: str = Field(default="neutral", pattern="^(neutral|formal|casual)$") 
-
-class SummarizerResponse(BaseModel):
-    summary: str = Field(..., min_length=20)
-    original_length: int
-    summary_length: int
-    compression_ratio: float
-    model_used: str
-    latency_ms: float
-    cost_estimate_usd: float
-
-# LLM call dengan retry
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-    retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
-)
-def call_llm(prompt: str, model: str = "gpt-4o-mini", temperature: float = 0.3) -> str:
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        max_tokens=500,
-    )
-    return response.choices[0].message.content
-
-def estimate_cost(input_tokens: int, output_tokens: int, model: str = "gpt-4o-mini") -> float:
-    pricing = {"gpt-4o-mini": {"input": 0.15, "output": 0.60}}
-    rates = pricing.get(model, pricing["gpt-4o-mini"])
-    return (input_tokens / 1_000_000) * rates["input"] + (output_tokens / 1_000_000) * rates["output"]
-
-# Endpoint
-@app.post("/summarize", response_model=SummarizerResponse)
-async def summarize(req: SummarizerRequest):
-    start_time = time.time()
-    
-    try:
-        # Build prompt
-        prompt = f"""
-Ringkas teks berikut dalam {req.max_length} kata.
-Gunakan bahasa {req.language} dengan gaya {req.style}.
-
-Teks:
-{req.text}
-
-Output dalam JSON:
-{{
-  "summary": "ringkasan teks",
-  "original_length": {len(req.text)},
-  "summary_length": ...,
-  "compression_ratio": ...,
-  "model_used": "gpt-4o-mini"
-}}
-"""
-        
-        # Call LLM
-        result_json = call_llm(prompt)
-        
-        # Parse & validate
-        import json
-        result = json.loads(result_json)
-        
-        # Hitung metric
-        latency_ms = (time.time() - start_time) * 1000
-        
-        # Estimasi biaya (asumsi input ~len(text)/4 token, output ~len(summary)/4 token)
-        input_tokens = len(req.text) // 4
-        output_tokens = len(result["summary"]) // 4
-        cost = estimate_cost(input_tokens, output_tokens)
-        
-        return SummarizerResponse(
-            summary=result["summary"],
-            original_length=result.get("original_length", len(req.text)),
-            summary_length=result.get("summary_length", len(result["summary"])),
-            compression_ratio=result.get("compression_ratio", len(result["summary"]) / len(req.text)),
-            model_used=result.get("model_used", "gpt-4o-mini"),
-            latency_ms=round(latency_ms, 2),
-            cost_estimate_usd=round(cost, 6)
-        )
-    
-    except Exception as e:
-        logger.error(f"Summarization failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to summarize: {str(e)}")
-
-# Test dengan curl:
-# curl -X POST "http://localhost:8000/summarize" -H "Content-Type: application/json" -d '{"text": "..."}'
-```
-
----
-
-### Latihan 2: Streaming Chat CLI
-
-**Tujuan:** Bangun chatbot CLI sederhana dengan streaming.
-
-```python
-import os
-from openai import OpenAI
-
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
-class ChatCLI:
-    def __init__(self, model="gpt-4o-mini"):
-        self.model = model
-        self.messages = []
-        self.max_history = 20  # max pesan yang disimpan
-    
-    def add_message(self, role, content):
-        self.messages.append({"role": role, "content": content})
-        # Potong history kalau terlalu panjang
-        if len(self.messages) > self.max_history:
-            self.messages = self.messages[-self.max_history:]
-    
-    def chat(self):
-        print("Chatbot CLI (ketik 'quit' untuk keluar)")
-        print("="*50)
-        
-        while True:
-            user_input = input("\nAnda: ").strip()
-            
-            if user_input.lower() in ["quit", "exit", "keluar"]:
-                print("¡ Sampai jumpa!")
-                break
-            
-            if not user_input:
-                continue
-            
-            # Tambah pesan user
-            self.add_message("user", user_input)
-            
-            # Print assistant response dengan streaming
-            print("Assistant: ", end="", flush=True)
-            
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=self.messages,
-                stream=True,
-                temperature=0.7,
-                max_tokens=1000,
-            )
-            
-            full_response = ""
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    print(content, end="", flush=True)
-                    full_response += content
-            
-            print()  # newline
-            
-            # Simpan response
-            self.add_message("assistant", full_response)
-
-# Jalankan
-if __name__ == "__main__":
-    cli = ChatCLI()
-    cli.add_message("system", "Kamu adalah asisten yang membantu. Jawab dalam bahasa Indonesia yang santai dan akurat.")
-    cli.chat()
-```
-
----
-
-### Latihan 3: Tool Calling dengan Validasi
-
-**Tujuan:** Implementasi tool calling yang aman dengan validasi parameter.
-
-```python
-import json
-from pydantic import BaseModel, Field, ValidationError
-from typing import Optional
-
-# Definisi tools dengan schema pydantic
-class GetWeatherInput(BaseModel):
-    city: str = Field(..., min_length=2, max_length=50, description="Nama kota")
-    unit: str = Field(default="celsius", pattern="^(celsius|fahrenheit)$")
-
-class CalculateInput(BaseModel):
-    expression: str = Field(..., min_length=1, max_length=100, description="Ekspresi matematika")
-
-class SearchNotesInput(BaseModel):
-    query: str = Field(..., min_length=3, max_length=200, description="Kata kunci pencarian")
-    limit: int = Field(default=5, ge=1, le=20)
-
-TOOLS = {
-    "get_weather": {
-        "function": GetWeatherInput,
-        "handler": lambda args: {"temperature": 28, "condition": "cerah", "city": args["city"], "unit": args["unit"]},
-        "description": "Dapatkan informasi cuaca untuk kota tertentu"
-    },
-    "calculate": {
-        "function": CalculateInput,
-        "handler": lambda args: {"result": eval(args["expression"])},
-        "description": "Melakukan kalkulasi matematika"
-    },
-    "search_notes": {
-        "function": SearchNotesInput,
-        "handler": lambda args: {"results": ["Catatan 1 tentang " + args["query"], "Catatan 2 tentang " + args["query"]]},
-        "description": "Mencari catatan yang relevan dengan query"
-    }
-}
-
-class ToolCallingAgent:
-    def __init__(self, model="gpt-4o-mini"):
-        self.model = model
-        self.tools = TOOLS
-        self.max_iterations = 5  # mencegah loop tak berujung
-    
-    def get_tool_schemas(self):
-        """Convert tools ke format yang dimengerti LLM API."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": info["description"],
-                    "parameters": info["function"].model_json_schema()
-                }
-            }
-            for name, info in self.tools.items()
-        ]
-    
-    def run(self, user_message: str):
-        """Jalankan agent loop: reason → act → observe."""
-        messages = [{"role": "user", "content": user_message}]
-        
-        for iteration in range(self.max_iterations):
-            print(f"\n--- Iterasi {iteration + 1} ---")
-            
-            # Call LLM
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=self.get_tool_schemas(),
-                tool_choice="auto",
-                temperature=0.0,
-            )
-            
-            message = response.choices[0].message
-            
-            # Kalau model bilang jawab langsung
-            if message.content and not message.tool_calls:
-                print(f"Assistant: {message.content}")
-                return message.content
-            
-            # Kalau model mau panggil tool
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    function_name = tool_call.function.name
-                    arguments_str = tool_call.function.arguments
-                    
-                    print(f"Tool call: {function_name}({arguments_str})")
-                    
-                    # Validasi arguments dengan pydantic
-                    try:
-                        args = self.tools[function_name]["function"].model_validate_json(arguments_str)
-                        print(f"  Validated args: {args}")
-                    except ValidationError as e:
-                        print(f"  ❌ Invalid arguments: {e}")
-                        # Kirim error ke model
-                        messages.append(message)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps({"error": str(e)})
-                        })
-                        continue
-                    
-                    # Eksekusi tool
-                    result = self.tools[function_name]["handler"](args.dict())
-                    print(f"  Result: {result}")
-                    
-                    # Kirim result ke model
-                    messages.append(message)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(result)
-                    })
-            else:
-                print("Tidak ada tool calls atau content")
-                break
-        
-        return "Maaf, saya tidak bisa membantu dengan permintaan tersebut."
-
-# Test
-agent = ToolCallingAgent()
-
-print("="*60)
-print("TOOL CALLING AGENT DEMO")
-print("="*60)
-
-# Test 1: Weather
-print("\n>> Test 1: Cuaca")
-result = agent.run("Berapa suhu Jakarta hari ini?")
-
-# Test 2: Kalkulasi
-print("\n>> Test 2: Kalkulasi")
-result = agent.run("Hitung 15 * 8 + 20")
-
-# Test 3: Multi-step
-print("\n>> Test 3: Multi-step")
-result = agent.run("Cari catatan tentang machine learning, lalu hitung rata-rata dari 5 poin")
-```
+1. **Hitung biaya sistemmu.** Ambil satu fitur LLM yang sudah kamu punya. Ukur
+   `tokens_in`/`tokens_out` rata-rata, hitung biaya per request, kalikan dengan
+   trafik harian. Lalu tulis **tiga** perubahan yang menurunkannya — sebelum
+   menyentuh kode.
+2. **Jadwalkan kegagalan.** Ambil satu fungsi pemanggil LLM di kodemu, suntik
+   `sleep_fn`/provider palsu, lalu tulis test untuk: transien pulih di percobaan
+   ke-2, fatal langsung gagal, dan percobaan habis. Kalau test ini sulit ditulis,
+   berarti desainnya belum bisa diuji.
+3. **Audit kunci cache.** Cari semua tempat di sistemmu yang men-cache keluaran
+   LLM. Untuk masing-masing, tulis daftar lengkap yang masuk kunci. Setiap item
+   yang lupa di daftar itu adalah bug yang belum terjadi.
 
 ---
 
@@ -775,21 +473,37 @@ result = agent.run("Cari catatan tentang machine learning, lalu hitung rata-rata
 
 | Sumber | Tipe | Keterangan |
 |---|---|---|
-| [OpenAI API Reference](https://platform.openai.com/docs/api-reference) | Dokumentasi | Referensi lengkap API OpenAI |
-| [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) | Dokumentasi | Referensi API Anthropic |
-| [Google Gemini API Docs](https://ai.google.dev/gemini-api/docs) | Dokumentasi | Referensi API Gemini |
-| [LiteLLM](https://docs.litellm.ai/) | Library | Provider-agnostic interface |
-| [OpenAI Cookbook](https://cookbook.openai.com/) | Contoh | Contoh produksi dari OpenAI |
-| [Tenacity documentation](https://tenacity.readthedocs.io/) | Library | Retry pattern Python |
+| [OpenAI API Reference](https://platform.openai.com/docs/api-reference) | Dokumentasi | Referensi lengkap: chat, streaming, tools, structured output |
+| [OpenAI Cookbook](https://cookbook.openai.com/) | Contoh | Pola produksi: retry, batching, evaluasi |
+| [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) | Dokumentasi | Tool use & prompt caching (prefix cache) |
+| [Google Gemini API Docs](https://ai.google.dev/gemini-api/docs) | Dokumentasi | Multimodal, context window besar |
+| [LiteLLM](https://docs.litellm.ai/) | Library | Antarmuka provider-agnostic: retry, fallback, anggaran |
+| [Tenacity](https://tenacity.readthedocs.io/) | Library | Retry + backoff deklaratif untuk Python |
+| [Pydantic](https://docs.pydantic.dev/) | Library | Validasi skema output LLM |
+| [Vercel AI SDK — streaming & tool calls](https://sdk.vercel.ai/docs) | Dokumentasi | Pola streaming di sisi klien (TTFT) |
 
 ---
 
 ## ✅ Checklist Kompetensi
 
-- [ ] API key via env var, tidak pernah di-commit
-- [ ] Output JSON dijamin valid (schema + retry)
-- [ ] Tahu biaya per request sistemmu dan 3 cara menekannya
-- [ ] Implementasi streaming di aplikasi
-- [ ] Buat fallback chain untuk multi-provider
-- [ ] Handle tool calling dengan validasi parameter
-- [ ] Setup logging & monitoring untuk LLM requests
+- [ ] API key dari environment variable; tidak ada kredensial di kode/commit
+- [ ] Bisa menghitung biaya per request **sebelum** memanggil, dan menganggarkan
+      per hari/per tenant
+- [ ] Ada penjaga anggaran yang **melewati** pekerjaan saat batas tercapai
+- [ ] Retry membedakan galat transien vs fatal, dengan backoff terbatas + jitter
+- [ ] Tidak ada jeda sia-sia setelah percobaan terakhir
+- [ ] Fallback chain ada, dan `dicoba`/`lompatan`-nya **dilog**
+- [ ] Cache di-key lengkap (model + pesan + parameter + versi prompt + konteks);
+      `hit`, `miss`, `expired` dihitung terpisah
+- [ ] Melaporkan TTFT **dan** total latency sebagai dua metrik berbeda
+- [ ] Output JSON dijamin valid: `response_format`/skema + parser + retry
+- [ ] Argumen tool divalidasi di kode kita; tidak ada `eval` pada data dari model
+- [ ] `maks_iterasi` ada di setiap loop tool; de-dup lewat assistant `tool_calls`
+- [ ] Pipeline melaporkan biaya/latency/attempts **per langkah**
+- [ ] Timeout per request dan timeout total dipasang
+- [ ] Menjalankan lab (semua ✅ Cek), kuis 22/22, dan project 107 test hijau
+
+Selesai? Lanjut ke **Bab 12 — RAG (Retrieval Augmented Generation)**: `konteks`
+yang di sini masih placeholder akan benar-benar diambil dari dokumen nyata — dan
+yang kamu bangun di bab ini (cache yang sadar konteks, anggaran, fallback, laporan
+per langkah) langsung menjadi rangka operasionalnya.

@@ -31,7 +31,7 @@
 
 > ⚠️ Jika ada link rusak di tabel di atas, buka langsung folder babnya.
 
-> 🆕 **Materi pendukung** (lab `.ipynb`, kuis berbobot, kunci jawaban, cheatsheet, project starter) sudah tersedia untuk **Bab 1–6**. Rencana belajar intensif minggu pertama: [`MINGGU-01.md`](MINGGU-01.md).
+> 🆕 **Materi pendukung** (lab `.ipynb`, kuis berbobot, kunci jawaban, cheatsheet, project starter) sudah tersedia untuk **Bab 1–12**. Rencana belajar intensif minggu pertama: [`MINGGU-01.md`](MINGGU-01.md).
 
 ---
 
@@ -81,3 +81,21 @@ pip install jupyter numpy pandas matplotlib scikit-learn tensorflow
 ```
 
 Untuk bab AI Engineering (9+): `pip install openai anthropic langchain langgraph ragas` — dijelaskan detail di bab masing-masing.
+
+---
+
+## Status Materi Pendukung per Bab
+
+| Bab | Lab | Kuis | Kunci | Cheatsheet | Project Starter (TDD) |
+|---|---|---|---|---|---|
+| 1–5 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 6 — NLP & Text | ✅ | ✅ | ✅ | ✅ | ✅ LM mini |
+| 7 — Time Series | ✅ | ✅ | ✅ | ✅ | ✅ Forecasting mini |
+| 8 — ML Produksi | ✅ | ✅ | ✅ | ✅ | ✅ Evaluasi produksi (52 test) |
+| 9 — LLM Fondasi | ✅ | ✅ | ✅ | ✅ | ✅ Tokenizer & mini-LM (76 test) |
+| 10 — Prompt Engineering | ✅ | ✅ | ✅ | ✅ | ✅ Lembar prompt & harness eval (157 test) |
+| 11 — LLM API & Orkestrasi | ✅ | ✅ | ✅ | ✅ | ✅ llmkit: cost/retry/fallback/cache/stream/tools/pipeline (107 test) |
+| 12 — RAG | ✅ | ✅ | ✅ | ✅ | ✅ ragkit: vectorstore/retriever/abstain/cache/hybrid/rerank/pipeline/evaluate (66 test) |
+
+> Lab/kuis/project sudah terverifikasi otomatis (skrip `_verify_*.py` di tiap folder bab) —
+> semua angka terkunci seed dan lolos pengecekan.

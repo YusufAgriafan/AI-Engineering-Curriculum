@@ -1,0 +1,468 @@
+"""Generate starter.ipynb & solusi.ipynb for the Bab 11 project-llmkit."""
+import json
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+
+
+def md(*lines):
+    return {"cell_type": "markdown", "metadata": {}, "source": [l + "\n" for l in lines]}
+
+
+def code(*lines):
+    return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [],
+            "source": [l + "\n" for l in lines]}
+
+
+def nb(cells):
+    return {
+        "cells": cells,
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python", "version": "3.11"},
+        },
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+
+
+def tulis(nama, cells):
+    path = BASE / nama
+    path.write_text(json.dumps(nb(cells), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("wrote", path)
+
+
+def dekat(a, b, tol=1e-12):
+    return f"assert abs({a} - {b}) < {tol}"
+
+
+# ============================== potongan bersama ==============================
+
+SETUP = [
+    "import sys",
+    "from pathlib import Path",
+    "",
+    "sys.path.insert(0, str(Path.cwd()))",
+    "",
+    "from llmkit.cache import CachePrompt, panggil_bercache",
+    "from llmkit.cost import biaya_hasil, hitung_biaya, jalankan_anggaran, token_estimasi",
+    "from llmkit.data import HARGA, LANGKAH_PIPELINE, RANTAI_FALLBACK, TIKET_CONTOH",
+    "from llmkit.fallback import panggil_dengan_fallback",
+    "from llmkit.orchestrate import jalankan_pipeline",
+    "from llmkit.retry import GalatSemuaPercobaan, backoff_ms, panggil_dengan_retry",
+    "from llmkit.stream import konsumsi_stream",
+    "from llmkit.tools import jalankan_tool, loop_tool, skema_tools, validasi_argumen",
+    "from llmkit.transport import (GalatPermintaanBuruk, ProviderPalsu, provider_cadangan,",
+    "                              provider_utama)",
+    "",
+    "PESAN = [{'role': 'user', 'content': 'Jelaskan apa itu machine learning dalam 2 kalimat.'}]",
+    "print('tarif USD / 1 juta token:', HARGA)",
+    "print('rencana kegagalan      :', {k: v for k, v in __import__('llmkit.data', fromlist=['x']).RENCANA.items()})",
+]
+
+COST = [
+    "# Token & biaya: dua angka yang harus kamu pegang sebelum menulis prompt",
+    "print('token_estimasi 1/4/5/9 huruf:', [token_estimasi('x' * n) for n in (1, 4, 5, 9)])",
+    "biaya_mini = hitung_biaya(1000, 300, 'mini')",
+    "biaya_besar = hitung_biaya(1000, 300, 'besar')",
+    "print('biaya mini  1k in/300 out: $%.6f' % biaya_mini)",
+    "print('biaya besar 1k in/300 out: $%.6f' % biaya_besar)",
+    "print('berapa kali lebih mahal  : %.1fx' % (biaya_besar / biaya_mini))",
+    "",
+    "assert biaya_mini == 0.00033",
+    "assert biaya_besar == 0.0095",
+    "assert token_estimasi('') == 0",
+    "print('✅ Biaya bisa dihitung SEBELUM memanggil — itu syarat bisa dianggarkan.')",
+    "",
+    "# Penjaga anggaran: berhenti MEMANGGIL, bukan paksa jalan",
+    "h = jalankan_anggaran(provider_utama(), [PESAN] * 4, 0.00003, model='mini')",
+    "print()",
+    "print('anggaran $0.00003 untuk 4 pekerjaan:')",
+    "print('  diproses:', h['diproses'], '| dilewati:', h['dilewati'], '| berhenti di index:', h['berhenti_di'])",
+    "print('  total biaya: $%.8f' % h['total_biaya_usd'])",
+    "assert (h['diproses'], h['dilewati'], h['berhenti_di']) == (3, 1, 3)",
+    "print('✅ Anggaran = fitur produk, bukan setelah-fakta. Lewati pekerjaan, jangan bablas.')",
+]
+
+RETRY = [
+    "# Retry: bedakan galat TRANSIEN (coba lagi) vs FATAL (jangan)",
+    "tunggu = []",
+    "h_mini = panggil_dengan_retry(provider_utama(), 'mini', PESAN)",
+    "h_sedang = panggil_dengan_retry(provider_utama(), 'sedang', PESAN, sleep_fn=tunggu.append)",
+    "print('mini (langsung ok)  : attempts', h_mini['attempts'], '| tunggu', h_mini['timpenungguan_ms'])",
+    "print('sedang (gagal sekali): attempts', h_sedang['attempts'], '| tunggu', h_sedang['timpenungguan_ms'],",
+    "      '| riwayat', h_sedang['riwayat'])",
+    "print('latensi panggilan   :', h_sedang['latency_ms'], 'ms -> total_ms', h_sedang['total_ms'])",
+    "assert h_mini['attempts'] == 1",
+    "assert h_sedang['attempts'] == 2 and tunggu == [1000]",
+    "assert h_sedang['total_ms'] == h_sedang['latency_ms'] + 1000",
+    "",
+    "try:",
+    "    panggil_dengan_retry(provider_utama(), 'besar', PESAN, maks_percobaan=2)",
+    "except GalatSemuaPercobaan as e:",
+    "    print()",
+    "    print('percobaan habis, riwayat:', e.riwayat)",
+    "    assert e.riwayat == [(1, 'rate_limit'), (2, 'server_error')]",
+    "",
+    "p_fatal = provider_utama()",
+    "try:",
+    "    panggil_dengan_retry(p_fatal, 'model_ajaib', PESAN)",
+    "except GalatPermintaanBuruk as e:",
+    "    print('galat fatal (bad_request) langsung dilempar:', e.jenis)",
+    "    assert p_fatal.jumlah_panggilan['model_ajaib'] == 1, 'fatal TIDAK boleh diulang'",
+    "",
+    "print('peta backoff:', [backoff_ms(n) for n in range(1, 6)])",
+    "assert [backoff_ms(n) for n in range(1, 6)] == [1000, 2000, 4000, 8000, 8000]",
+    "print('✅ Retry bukan \\\"loop sampai berhasil\\\": ia keputusan jenis galat + jadwal tunggu.')",
+]
+
+FALLBACK = [
+    "# Fallback chain: kesempatan kedua dengan biaya/kualitas berbeda",
+    "provs = {'utama': provider_utama(), 'cadangan': provider_cadangan()}",
+    "h_fb = panggil_dengan_fallback(provs, RANTAI_FALLBACK, PESAN, settings={'maks_percobaan': 2})",
+    "print('rantai:', [(t['provider'], t['model']) for t in RANTAI_FALLBACK])",
+    "for d in h_fb['dicoba']:",
+    "    print(\"  coba %-8s %-6s sukses=%-5s jenis=%s\" % (d['provider'], d['model'], d['sukses'], d['jenis']))",
+    "print('berhenti di tautan ke-', h_fb['lompatan'], '->', h_fb['model'])",
+    "assert h_fb['lompatan'] == 1 and h_fb['model'] == 'mini'",
+    "",
+    "# harga kualitas: model besar dipakai kalau benar-benar perlu",
+    "mahal = ProviderPalsu('utama', HARGA, {'mini': ['ok'], 'sedang': ['ok'], 'besar': ['ok']})",
+    "h_besar = panggil_dengan_retry(mahal, 'besar', PESAN)",
+    "print()",
+    "print('biaya besar: $%.6f | mini: $%.6f | rasio %.1fx'",
+    "      % (biaya_hasil(h_besar), biaya_hasil(h_mini), biaya_hasil(h_besar) / biaya_hasil(h_mini)))",
+    "assert biaya_hasil(h_besar) > 10 * biaya_hasil(h_mini)",
+    "print('✅ Fallback = keputusan bertingkat: kualitas lebih dulu, biaya lebih dulu, atau keduanya.')",
+]
+
+CACHE = [
+    "# Cache: hindari membayar dua kali untuk pertanyaan yang sama",
+    "c = CachePrompt(ttl=3)",
+    "p_cache = provider_utama()",
+    "pola = [panggil_bercache(p_cache, 'mini', PESAN, c, sekarang=t)['cache'] for t in (0, 1, 5, 6)]",
+    "print('pola (tick 0,1,5,6):', pola)",
+    "print('statistik          :', c.statistik())",
+    "print('panggilan ke provider:', p_cache.jumlah_panggilan['mini'], '(bukan 4!)')",
+    "assert pola == ['miss', 'hit', 'miss', 'hit']",
+    "assert p_cache.jumlah_panggilan['mini'] == 2",
+    "assert abs(c.statistik()['hit_rate'] - 0.5) < 1e-12",
+    "",
+    "print()",
+    "print('kunci =', c.kunci('mini', PESAN))",
+    "print('kunci beda model:', c.kunci('mini', PESAN) != c.kunci('sedang', PESAN))",
+    "print('kunci beda suhu :', c.kunci('mini', PESAN, {'temperature': 0.0}) !=",
+    "      c.kunci('mini', PESAN, {'temperature': 1.0}))",
+    "assert c.kunci('mini', PESAN) == 'f833386edc2ecf9c'",
+    "print('✅ Cache harus di-key oleh SEMUA yang mengubah output: model, pesan, parameter.')",
+    "print('   TTL di sini pakai tick logis supaya bisa di-test tanpa menunggu jam dinding.')",
+]
+
+STREAM = [
+    "# Streaming: TTFT itu metrik pengalaman, total_ms itu metrik biaya/throughput",
+    "s = konsumsi_stream(provider_utama().stream('mini', PESAN))",
+    "print('ttft  :', s['ttft_ms'], 'ms')",
+    "print('total :', s['total_ms'], 'ms |', s['jumlah_chunk'], 'chunk')",
+    "print('teks  :', s['teks'])",
+    "assert (s['ttft_ms'], s['total_ms'], s['jumlah_chunk']) == (120, 340, 11)",
+    "print('token pertama muncul %.0f%% lebih cepat dari total respons'",
+    "      % (100 * (1 - s['ttft_ms'] / s['total_ms'])))",
+    "",
+    "chunk_palsu = [{'delta': '', 't_ms': 10}, {'delta': 'Halo', 't_ms': 55}, {'delta': ' dunia', 't_ms': 90}]",
+    "print('contoh kecil:', konsumsi_stream(chunk_palsu))",
+    "assert konsumsi_stream([{'delta': '', 't_ms': 42}])['ttft_ms'] is None",
+    "print('✅ Streaming memindahkan waktu tunggu, tidak menghapusnya.')",
+    "print('   Dipakai untuk UX (chat, output panjang). Untuk task JSON 200 token: overhead tak berguna.')",
+]
+
+TOOLS = [
+    "# Function calling: model MEMILIH, kode yang MENGEKSEKUSI (dan memvalidasi)",
+    "print('tools:', [t['function']['name'] for t in skema_tools()])",
+    "print('skema get_cuaca:', skema_tools()[0]['function']['parameters'])",
+    "print()",
+    "print('validasi ok    :', validasi_argumen('get_cuaca', {'kota': 'Bandung', 'satuan': 'celsius'}))",
+    "print('validasi kurang:', validasi_argumen('get_cuaca', {}))",
+    "print('validasi tipe  :', validasi_argumen('get_cuaca', {'kota': 5, 'satuan': 'celsius'}))",
+    "assert validasi_argumen('get_cuaca', {}) == ['missing:kota', 'missing:satuan']",
+    "assert jalankan_tool('get_cuaca', {'kota': 5})['galat'] == 'missing:satuan; type:kota'",
+    "",
+    "h_tool = loop_tool(provider_utama(), 'mini',",
+    "                   'Cari catatan tentang machine learning, lalu hitung 15 * 8 + 20.')",
+    "print()",
+    "print('tool dipakai:', h_tool['tool_dipakai'], '| iterasi:', h_tool['iterasi'])",
+    "for r in h_tool['riwayat']:",
+    "    print('  iterasi %d -> %s(%s) = %s' % (r['iterasi'], r['tool'], r['argumen'], r['hasil']))",
+    "print('jawaban:', h_tool['jawaban'])",
+    "assert h_tool['tool_dipakai'] == ['cari_catatan', 'hitung'] and h_tool['iterasi'] == 3",
+    "",
+    "h_mentok = loop_tool(provider_utama(), 'mini', 'Berapa suhu Jakarta hari ini?', maks_iterasi=1)",
+    "print('mentok maks_iterasi:', h_mentok['berhenti'], '| jawaban:', h_mentok['jawaban'])",
+    "assert h_mentok['berhenti'] == 'maks_iterasi' and h_mentok['jawaban'] is None",
+    "print('✅ Batas iterasi itu WAJIB: agent tanpa batas = tagihan tanpa batas.')",
+    "print('   Argumen tool divalidasi di KODE kita, bukan dipercaya dari model.')",
+]
+
+PIPELINE = [
+    "# Orkestrasi: pecah satu tugas besar jadi langkah yang bisa diaudit",
+    "pl = jalankan_pipeline(provider_utama(), LANGKAH_PIPELINE, TIKET_CONTOH)",
+    "print('tiket:', TIKET_CONTOH)",
+    "print()",
+    "print(\"%-12s %-7s %-7s %-9s %-6s %s\" % ('langkah', 'model', 'sukses', 'attempts', 'ms', 'biaya'))",
+    "for l in pl['langkah']:",
+    "    print(\"%-12s %-7s %-7s %-9s %-6s $%.8f\"",
+    "          % (l['nama'], l['model'], l['sukses'], l['attempts'], l['total_ms'], l['biaya_usd']))",
+    "print('total: berhasil %d | gagal %d | %d ms | $%.8f'",
+    "      % (pl['berhasil'], pl['gagal'], pl['total_ms'], pl['total_biaya_usd']))",
+    "assert (pl['berhasil'], pl['gagal'], pl['total_ms']) == (3, 0, 1620)",
+    "assert [l['attempts'] for l in pl['langkah']] == [1, 1, 2]",
+    "",
+    "pl_gagal = jalankan_pipeline(provider_utama(), LANGKAH_PIPELINE, TIKET_CONTOH, maks_percobaan=1)",
+    "print()",
+    "print('dengan maks_percobaan=1:', [(l['nama'], l['sukses'], l['galat']) for l in pl_gagal['langkah']])",
+    "print('berhasil/gagal:', pl_gagal['berhasil'], '/', pl_gagal['gagal'])",
+    "assert (pl_gagal['berhasil'], pl_gagal['gagal']) == (2, 1)",
+    "print('✅ Tiap langkah punya metriknya sendiri -> kegagalan TERLOKALISASI.')",
+    "print('   Bonus: langkah yang gagal biayanya $0 (provider tidak menagih percobaan gagal di mock).')",
+]
+
+RINGKASAN = [
+    "print('=' * 66)",
+    "print('RINGKASAN: satu pekerjaan pelanggan, biaya & latensi per komponen')",
+    "print('=' * 66)",
+    "print('1. retry    : attempts %d, backoff %s' % (h_sedang['attempts'], h_sedang['timpenungguan_ms']))",
+    "print('2. fallback : berhenti di tautan %d (%s)' % (h_fb['lompatan'], h_fb['model']))",
+    "print('3. cache    : hit rate %.2f -> %d panggilan provider untuk 4 permintaan'",
+    "      % (c.statistik()['hit_rate'], p_cache.jumlah_panggilan['mini']))",
+    "print('4. stream   : TTFT %d ms dari total %d ms' % (s['ttft_ms'], s['total_ms']))",
+    "print('5. tools    : %s (%d iterasi)' % (h_tool['tool_dipakai'], h_tool['iterasi']))",
+    "print('6. pipeline : %d langkah, $%.8f, %d ms'",
+    "      % (len(pl['langkah']), pl['total_biaya_usd'], pl['total_ms']))",
+    "print()",
+    "print('Lima angka yang harus kamu laporkan tiap perubahan (bukan cuma \\\"jalan kok\\\").')",
+    "print('Semuanya bisa diuji tanpa jaringan karena providernya palsu & deterministik.')",
+]
+
+PERTANYAAN = (
+    "**Pertanyaan Analisis** (jawab di cell markdown — bagian penilaian, lihat RUBRIK.md):",
+    "",
+    "1. `bad_request` tidak diretry, `rate_limit` diretry. Apa yang rusak kalau kedua-duanya",
+    "   diretry dengan backoff yang sama? Kaitkan dengan biaya dan dengan pengalaman pengguna.",
+    "2. Backoff naik 1000 → 2000 → 4000 ms. Kenapa tidak langsung 8000 ms sejak percobaan",
+    "   pertama, dan kenapa ada batas atas (`maks_ms`)?",
+    "3. Fallback ke `murah`/`mini` menyelamatkan permintaan, tapi apa harganya? (petunjuk:",
+    "   kualitas, konsistensi output, dan panjang jawaban). Kapan fallback ke model kecil",
+    "   justru lebih buruk daripada mengembalikan error?",
+    "4. Cache di sini di-key oleh model + pesan + parameter. Sebutkan dua hal lagi yang WAJIB",
+    "   masuk kunci cache di produksi (petunjuk: versi prompt dan Bab 12).",
+    "5. Streaming menurunkan TTFT 120 ms vs total 340 ms, tapi total waktunya sama. Ukuran",
+    "   apa yang sebenarnya diperbaiki, dan kapan streaming justru menambah kompleksitas",
+    "   tanpa manfaat?",
+    "6. Argumen tool divalidasi di kode kita sebelum handler dipanggil. Apa risiko kalau kita",
+    "   langsung mengeksekusi `eval(argumen)` seperti contoh di README Bab 11, dan bagaimana",
+    "   prinsip least-privilege (Bab 14) membatasinya?",
+)
+
+EKSPERIMEN_OPSIONAL = (
+    "### (Opsional) Eksperimen lanjutan",
+    "",
+    "Semua bisa diukur dengan komponen yang sudah kamu bangun:",
+    "",
+    "1. **Router model.** Tulis fungsi yang memilih model dari panjang prompt (atau kata kunci)",
+    "   lalu bandingkan total biaya vs akurasi terhadap \"selalu pakai model besar\".",
+    "2. **Cache + anggaran.** Gabungkan `CachePrompt` dengan `jalankan_anggaran`: berapa",
+    "   persen anggaran yang tersisa saat cache hit rate 80%?",
+    "3. **Retry dengan jitter.** Tambahkan jitter deterministik (`rng.integers`) pada backoff,",
+    "   lalu jelaskan kenapa produksi nyata butuh jitter (thundering herd).",
+)
+
+EKSPERIMEN_CODE = [
+    "# TODO: tulis eksperimenmu di sini. Contoh kerangka router:",
+    "# def pilih_model(prompt):",
+    "#     return 'mini' if len(prompt) < 500 else 'besar'",
+    "# for p_ in [PESAN, PESAN * 5]:",
+    "#     m = pilih_model(p_[0]['content'])",
+    "#     h = panggil_dengan_retry(providers_ok[m]...)",
+]
+
+# ============================== STARTER ==============================
+
+starter = [
+    md(
+        "# 🏗️ Starter — llmkit: Dari \"Panggilan API\" ke Sistem yang Tahan Gagal (Bab 11)",
+        "",
+        "> Notebook eksperimen. **Prasyarat:** semua 107 test hijau",
+        "> (`python -m unittest discover -s tests -v`).",
+        "",
+        "Kamu tidak memanggil API sungguhan. Kamu memakai **provider palsu deterministik**",
+        "yang bisa dijadwalkan gagal (`llmkit/transport.py`). Keuntungannya: pola produksi",
+        "bisa diuji tepat di titik kegagalannya — retry pada percobaan ke-2, fallback pada",
+        "tautan ke-2, cache kedaluwarsa pada tick ke-3.",
+        "",
+        "| Bagian | Yang diukur |",
+        "|---|---|",
+        "| 1 | Token, biaya, penjaga anggaran |",
+        "| 2 | Retry, backoff, galat transien vs fatal |",
+        "| 3 | Fallback chain & harga kualitas |",
+        "| 4 | Cache hit rate & TTL |",
+        "| 5 | Wall-clock TTFT vs total |",
+        "| 6 | Function calling + validasi + batas iterasi |",
+        "| 7 | Orkestrasi pipeline & laporan per langkah |",
+    ),
+    md("## Setup: Provider Palsu & Tarifnya"),
+    code(*SETUP),
+    md("## Bagian 1 — Cost: Uang dan Anggaran"),
+    code(*COST),
+    md("## Bagian 2 — Retry: Transien vs Fatal"),
+    code(*RETRY),
+    md("## Bagian 3 — Fallback Chain: Kesempatan Kedua"),
+    code(*FALLBACK),
+    md("## Bagian 4 — Cache: Jangan Bayar Dua Kali"),
+    code(*CACHE),
+    md("## Bagian 5 — Streaming: TTFT"),
+    code(*STREAM),
+    md("## Bagian 6 — Function Calling: Model Memilih, Kode Mengeksekusi"),
+    code(*TOOLS),
+    md("## Bagian 7 — Orkestrasi: Pipeline & Laporan"),
+    code(*PIPELINE),
+    md(
+        "## Bagian 8 — Ringkasan",
+        "",
+        "Isi `RUBRIK.md` dari angka-angka ini, lalu jawab pertanyaan analisis.",
+    ),
+    code(*RINGKASAN),
+    md(*PERTANYAAN),
+    md(*EKSPERIMEN_OPSIONAL),
+    code(*EKSPERIMEN_CODE),
+]
+
+# ============================== SOLUSI ==============================
+
+SETUP_SOLUSI = [
+    "import sys",
+    "import inspect",
+    "from pathlib import Path",
+    "",
+    "sys.path.insert(0, str(Path.cwd()))",
+    "sys.path.insert(0, str(Path.cwd() / 'solusi'))",
+    "",
+    "import llmkit_ref as ref",
+    "import llmkit.cache as cache_mod",
+    "import llmkit.cost as cost_mod",
+    "import llmkit.fallback as fb_mod",
+    "import llmkit.orchestrate as orch_mod",
+    "import llmkit.retry as retry_mod",
+    "import llmkit.stream as stream_mod",
+    "import llmkit.tools as tools_mod",
+    "",
+    "for mod, names in [(cost_mod, ['token_estimasi', 'hitung_biaya', 'biaya_hasil', 'jalankan_anggaran']),",
+    "                   (retry_mod, ['backoff_ms', 'panggil_dengan_retry']),",
+    "                   (fb_mod, ['panggil_dengan_fallback']),",
+    "                   (cache_mod, ['panggil_bercache']),",
+    "                   (stream_mod, ['konsumsi_stream']),",
+    "                   (tools_mod, ['skema_parameter', 'skema_tools', 'validasi_argumen',",
+    "                                'jalankan_tool', 'loop_tool']),",
+    "                   (orch_mod, ['jalankan_pipeline'])]:",
+    "    for nama_ in names:",
+    "        setattr(mod, nama_, getattr(ref, nama_))",
+    "cache_mod.CachePrompt = ref.CachePrompt",
+    "retry_mod.GalatSemuaPercobaan = ref.GalatSemuaPercobaan",
+    "print('llmkit di-patch dengan implementasi referensi.')",
+]
+
+solusi = [
+    md(
+        "# ✅ Solusi — llmkit: Sistem LLM yang Tahan Gagal (Bab 11)",
+        "",
+        "> **Buka HANYA SETELAH** selesai mencoba (atau mentok).",
+        "",
+        "Notebook ini mem-patch `llmkit` dengan `solusi/llmkit_ref.py` lalu menjalankan",
+        "alur yang sama — semua angka reproducible.",
+    ),
+    md("## Setup (patch implementasi referensi)"),
+    code(*SETUP_SOLUSI),
+    md(
+        "### Kunci: `panggil_dengan_retry`",
+        "",
+        "Perhatikan urutannya: catat riwayat → putuskan transien/fatal → **jangan tunggu**",
+        "setelah percobaan terakhir. `sleep_fn` disuntik supaya test tidak menunggu 1 detik",
+        "sungguhan — pola yang sama dipakai di produksi untuk test cepat.",
+    ),
+    code("print(inspect.getsource(ref.panggil_dengan_retry))"),
+    md(
+        "### Kunci: `panggil_dengan_fallback`",
+        "",
+        "Rantai dilewati BERURUTAN; setiap tautan boleh punya `settings` sendiri",
+        "(mis. coba keras di model utama, coba cepat di cadangan).",
+    ),
+    code("print(inspect.getsource(ref.panggil_dengan_fallback))"),
+    md(
+        "### Kunci: `loop_tool`",
+        "",
+        "Loop berhenti karena tiga hal: model tidak lagi minta tool, `maks_iterasi` tercapai,",
+        "atau galat tool dikirim balik sebagai pesan `tool` (bukan crash).",
+    ),
+    code("print(inspect.getsource(ref.loop_tool))"),
+    md("## Jalankan Seluruh Alur (angka solusi)"),
+    code(*SETUP),
+    code(*COST),
+    code(*RETRY),
+    code(*FALLBACK),
+    code(*CACHE),
+    code(*STREAM),
+    code(*TOOLS),
+    code(*PIPELINE),
+    code(*RINGKASAN),
+    md("## Jawaban Pertanyaan Analisis (bandingkan dengan versimu)"),
+    md(
+        "**1. Transien vs fatal.** `rate_limit`/`server_error`/`timeout` adalah keadaan",
+        "sesaat: mengulang dengan jeda masuk akal. `bad_request` (skema salah, model tidak",
+        "ada) TIDAK akan berubah kalau diulang — kamu membayar N percobaan untuk kegagalan",
+        "yang sama, menambah latensi pengguna dan menaikkan beban provider. Di kode: galat",
+        "fatal langsung dilempar (`p.jumlah_panggilan[...] == 1`), jadi biaya nol untuk",
+        "kegagalan yang bisa dideteksi lebih awal.",
+        "",
+        "**2. Kenapa naik perlahan + ada batas atas.** Backoff eksponensial memberi waktu",
+        "provider pulih tanpa membanjiri: 1000 ms cukup untuk rate limit sekilas; kalau",
+        "langsung 8000 ms kamu menghukum pengguna untuk masalah yang mungkin sudah hilang.",
+        "Batas atas (`maks_ms=8000`) menjaga worst case tetap bisa diterima — tanpa batas,",
+        "percobaan ke-10 akan menunggu 8 menit. Di produksi, jitter ditambahkan supaya",
+        "ribuan klien tidak bangun bersamaan (thundering herd).",
+        "",
+        "**3. Harga fallback.** Rantai kita jatuh dari `besar` ke `mini`: permintaan",
+        "terselamatkan, biaya turun ~26x, tapi kualitas penalaran turun dan gaya output bisa",
+        "BERUBAH — pada sistem yang hasilnya diparse/dibandingkan (JSON, skor), perubahan",
+        "model di tengah jalan adalah sumber regresi. Fallback ke model kecil tepat untuk",
+        "tugas toleran (ringkas, klasifikasi kasar). Untuk tugas yang butuh presisi (kode,",
+        "ekstraksi ber-skema ketat), lebih jujur mengembalikan error 503 + retry di sisi",
+        "klien daripada mengembalikan hasil yang tampak sukses tapi beda kualitas.",
+        "",
+        "**4. Kunci cache di produksi.** Yang wajib masuk: (a) **versi prompt** — prompt berubah",
+        "= jawaban boleh berubah; tanpa versi, kamu menyajikan jawaban lama untuk prompt baru;",
+        "(b) **konteks retrieval** (Bab 12) — dokumen yang ditempelkan ikut menentukan jawaban.",
+        "Tambahan: nama/model snapshot provider, `temperature`/`top_p`/`max_tokens`, dan",
+        "**user/tenant id** kalau data sensitif (jangan pernah cache lintas tenant).",
+        "",
+        "**5. Streaming.** Yang diperbaiki adalah **waktu sampai token pertama terlihat**",
+        "(TTFT 120 ms vs 340 ms total di mock): persepsi \"responsif\". Total waktu proses tidak",
+        "berubah. Streaming tidak layak untuk output JSON pendek yang baru berguna setelah",
+        "utuh, untuk batch/async (tidak ada manusia menunggu), atau kalau parsing membutuhkan",
+        "hasil lengkap — di kasus itu streaming menambah kompleksitas tanpa manfaat.",
+        "",
+        "**6. Validasi argumen tool.** Model menghasilkan `arguments` sebagai data yang bisa",
+        "salah/kosong/halusinasi; mengeksekusinya mentah-mentah berarti model memegang kendali",
+        "kode kita. Contoh `eval(argumen['expression'])` di README adalah pintu RCE. Yang benar:",
+        "schema → validasi tipe/required → hanya handler yang di-whitelist → least-privilege",
+        "(tool hanya bisa yang diizinkan untuk tenant itu, tanpa akses data mentah) → log semua",
+        "pemanggilan. Di Bab 14 ini berkembang jadi sandboxing agent.",
+    ),
+    md(
+        "---",
+        "",
+        "Selanjutnya: isi `RUBRIK.md` dengan angka-mu, lalu lanjut ke kuis Bab 11 dan",
+        "setelahnya Bab 12 (RAG) — tempat \"konteks\" yang di sini masih placeholder",
+        "benar-benar diambil dari dokumen nyata.",
+    ),
+]
+
+tulis("starter.ipynb", starter)
+tulis("solusi.ipynb", solusi)

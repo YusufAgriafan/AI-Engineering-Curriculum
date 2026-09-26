@@ -29,7 +29,7 @@ Time Series = Trend + Seasonality + Noise
   └─ Periode: harian (traffic website), mingguan, bulanan, tahunan
 
 ♦ Noise: variasi acak yang tidak bisa dijelaskan model
-  Contoh: gangguan acak, error測定, kejadian tak terduga
+  Contoh: gangguan acak, error pengukuran, kejadian tak terduga
 ```
 
 ```python
@@ -265,7 +265,7 @@ print(f"\nModel terbaik: {best_model} dengan MAE {results[best_model]:.4f}")
 | DNN Dense | Belajar pola non-linear, cepat training | Tidak menangani sequence dependency dengan baik | Series dengan pola non-linear tapi konteks pendek |
 | RNN / LSTM | Contextual memory, sequence dependency | Lambat training, vanishing gradient (LSTM kurang) | Series panjang dengan dependensi temporal |
 | Transformer (Time Series) | State-of-the-art di banyak task | Kompleks, butuh data lebih banyak | Task kompleks dengan data besar |
-| Prophet / Holt-Winters | Musiman & trend, mudah di-gunakakan | Kaku, tidak fleksibel untuk pola kompleks | Biz metrics dengan seasonality kuat |
+| Prophet / Holt-Winters | Musiman & trend, mudah digunakan | Kaku, tidak fleksibel untuk pola kompleks | Metrik bisnis dengan seasonality kuat |
 
 ---
 
@@ -605,6 +605,18 @@ print(f"  Train: {len(X_train)}, Test: {len(X_test)}")
 > 2. Bandingkan dengan baseline "prediksi = harga hari ini"
 > 3. Evaluasi dengan MAE dan RMSE
 > 4. Visualisasikan prediksi vs actual untuk 30 hari terakhir
+
+---
+
+## 🧰 Materi Pendukung (Folder Ini)
+
+| File | Apa | Kapan Dipakai |
+|---|---|---|
+| `01_lab_time_series.ipynb` | Lab praktikum: 9 bagian — dekomposisi + ACF, windowing, split temporal vs acak (demo leakage), baseline, AR(p) rekursif, Holt-Winters aditif/multiplikatif, log-transform + metrik, rolling backtest, sunspots opsional | Kerjakan setelah baca materi inti |
+| `02_kuis_time_series.ipynb` | 12 soal (PG + coding), 23 poin, skor otomatis | Setelah lab selesai |
+| `03_kunci_jawaban_kuis_time_series.ipynb` | Kunci + intuisi di balik tiap jawaban | HANYA setelah mencoba kuis |
+| `cheatsheet-time-series.md` | Rumus kunci + pola kode + koneksi ke bab lain | Review harian / sebelum kuis |
+| `project-starter-forecasting-mini/` | Proyek end-to-end: pipeline forecasting dari nol — windowing + split temporal + baseline + AR(p) + Holt-Winters + backtest (TDD, 40 test) + starter/solusi + RUBRIK | Setelah kuis ≥ 18/23 |
 
 ---
 

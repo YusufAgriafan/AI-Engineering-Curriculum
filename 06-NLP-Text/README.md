@@ -3,6 +3,7 @@
 > Dari teks mentah ke model. Bab ini adalah jembatan langsung ke LLM: tokenisasi, embedding, dan sequence model semuanya bermuara ke Transformer.
 
 ## 🎯 Tujuan Belajar
+
 - Tokenisasi teks & sequence padding.
 - Embedding: kata → vektor bermakna.
 - RNN, LSTM, GRU, Conv1D untuk teks.
@@ -178,12 +179,12 @@ plt.show()
 
 #### LSTM & GRU: Solusi untuk Long-Term Dependency
 
-| Aspek | RNN Dasar | LSTM | GRU |
-|---|---|---|---|
-| Gating mechanism | Tidak ada | 3 gate (input, forget, output) | 2 gate (update, reset) |
-| Memori jangka panjang | Lemah | Kuat | Cukup kuat |
-| Kompleksitas | Rendah | Lebih tinggi | Sedang |
-| Kecepatan | Cepat | Lebih lambat | Sedang |
+| Aspek                 | RNN Dasar | LSTM                           | GRU                    |
+| --------------------- | --------- | ------------------------------ | ---------------------- |
+| Gating mechanism      | Tidak ada | 3 gate (input, forget, output) | 2 gate (update, reset) |
+| Memori jangka panjang | Lemah     | Kuat                           | Cukup kuat             |
+| Kompleksitas          | Rendah    | Lebih tinggi                   | Sedang                 |
+| Kecepatan             | Cepat     | Lebih lambat                   | Sedang                 |
 
 ```python
 from tensorflow.keras import layers
@@ -253,14 +254,14 @@ class TextGenerator(tf.keras.Model):
         self.embedding = layers.Embedding(vocab_size, embedding_dim)
         self.lstm = layers.LSTM(rnn_units, return_sequences=True, return_state=True)
         self.dense = layers.Dense(vocab_size)
-    
+  
     def call(self, inputs, states=None, return_state=False, training=False):
         x = self.embedding(inputs, training=training)
         if states is None:
             states = self.lstm.get_initial_state(x)
         x, states = self.lstm(x, initial_state=states, training=training)
         logits = self.dense(x, training=training)
-        
+      
         if return_state:
             return logits, states
         return logits
@@ -287,12 +288,12 @@ for temp in [0.2, 1.0, 2.0]:
 
 ### 1.5 Mengapa Transformer Menggantikan RNN
 
-| Aspek | RNN/LSTM | Transformer |
-|---|---|---|
-| Parallelization | ❌ Sekuensial (lambat) | ✅ Seluruh sequence sekaligus |
-| Long-range context | ⚠️ Menurun di panjang | ✅ Self-attention langsung |
-| Training speed | Lambat | Cepat (setelah di-parallelize) |
-| Kualitas (saat ini) | Kurang kompetitif | State-of-the-art | 
+| Aspek               | RNN/LSTM                | Transformer                    |
+| ------------------- | ----------------------- | ------------------------------ |
+| Parallelization     | ❌ Sekuensial (lambat)  | ✅ Seluruh sequence sekaligus  |
+| Long-range context  | ⚠️ Menurun di panjang | ✅ Self-attention langsung     |
+| Training speed      | Lambat                  | Cepat (setelah di-parallelize) |
+| Kualitas (saat ini) | Kurang kompetitif       | State-of-the-art               |
 
 ```
 RNN:          "Machine" → [h1] → "learning" → [h2] → "is" → [h3] → ...
@@ -502,25 +503,25 @@ history = model.fit(X, y, epochs=20, batch_size=64, verbose=1)
 # Generate teks baru
 def generate_text(model, seed_text, gen_length=100, temperature=1.0):
     generated = seed_text
-    
+  
     for _ in range(gen_length):
         # Encode seed
         x_pred = np.zeros((1, seq_length, vocab_size))
         for t, char in enumerate(generated[-seq_length:]):
             if char in char2idx:
                 x_pred[0, t, char2idx[char]] = 1
-        
+      
         # Prediksi
         preds = model.predict(x_pred, verbose=0)[0]
-        
+      
         # Sampling dengan temperature
         preds = np.log(preds + 1e-8) / temperature
         preds = np.exp(preds) / np.sum(np.exp(preds))
         next_index = np.random.choice(range(vocab_size), p=preds)
         next_char = idx2char[next_index]
-        
+      
         generated += next_char
-    
+  
     return generated
 
 print("\n" + "="*50)
@@ -666,25 +667,25 @@ compare_words('pesawat', 'sayur')
 
 ## 🧰 Materi Pendukung (Folder Ini)
 
-| File | Apa | Kapan Dipakai |
-|---|---|---|
-| `01_lab_nlp_text.ipynb` | Lab praktikum: 10 bagian — tokenisasi/padding, skip-gram + negative sampling (gradient check), purity + PCA, klasifikasi sentimen, bigram + temperature, RNN BPTT vs bigram, vanishing gradient | Kerjakan setelah baca materi inti |
-| `02_kuis_nlp_text.ipynb` | 10 soal (PG + coding), 23 poin, skor otomatis | Setelah lab selesai |
-| `03_kunci_jawaban_kuis_nlp_text.ipynb` | Kunci + intuisi di balik tiap jawaban | HANYA setelah mencoba kuis |
-| `cheatsheet-nlp-text.md` | Rumus kunci + pola kode + koneksi ke bab lain | Review harian / sebelum kuis |
-| `project-starter-lm-mini/` | Proyek end-to-end: language model mini dari nol — embedding + bigram LM + RNN BPTT (TDD, 40 test) + starter/solusi + RUBRIK | Setelah kuis ≥ 18/23 |
+| File                                     | Apa                                                                                                                                                                                              | Kapan Dipakai                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| `01_lab_nlp_text.ipynb`                | Lab praktikum: 10 bagian — tokenisasi/padding, skip-gram + negative sampling (gradient check), purity + PCA, klasifikasi sentimen, bigram + temperature, RNN BPTT vs bigram, vanishing gradient | Kerjakan setelah baca materi inti |
+| `02_kuis_nlp_text.ipynb`               | 10 soal (PG + coding), 23 poin, skor otomatis                                                                                                                                                    | Setelah lab selesai               |
+| `03_kunci_jawaban_kuis_nlp_text.ipynb` | Kunci + intuisi di balik tiap jawaban                                                                                                                                                            | HANYA setelah mencoba kuis        |
+| `cheatsheet-nlp-text.md`               | Rumus kunci + pola kode + koneksi ke bab lain                                                                                                                                                    | Review harian / sebelum kuis      |
+| `project-starter-lm-mini/`             | Proyek end-to-end: language model mini dari nol — embedding + bigram LM + RNN BPTT (TDD, 40 test) + starter/solusi + RUBRIK                                                                     | Setelah kuis ≥ 18/23             |
 
 ---
 
 ## 📚 Referensi Online
 
-| Sumber | Topik | Keterangan |
-|---|---|---|
-| [TensorFlow Text Generation Tutorial](https://www.tensorflow.org/text/tutorials/text_generation) | Tutorial resmi | Praktik langsung dengan LSTM text generation |
-| [Stanford CS224n — NLP with Deep Learning](http://web.stanford.edu/class/cs224n/) | Kuliah lengkap | Materi paling komprehensif untuk NLP |
-| [The Illustrated Word2vec — Jay Alammar](https://jalammar.github.io/illustrated-word2vec/) | Visualisasi | Penjelasan embedding yang sangat mudah dimengerti |
-| [Hugging Face NLP Course](https://huggingface.co/learn/nlp-course) | Kursus gratis | Jembatan ke Transformer/Lab berikutnya |
-| [Natural Language Processing with Transformers (book)](https://www.oreilly.com/library/view/natural-language-processing-with/9781098136789/) | Buku | Jika ingin pendalaman transformer-based NLP |
+| Sumber                                                                                                                                      | Topik          | Keterangan                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ------------------------------------------------- |
+| [TensorFlow Text Generation Tutorial](https://www.tensorflow.org/text/tutorials/text_generation)                                             | Tutorial resmi | Praktik langsung dengan LSTM text generation      |
+| [Stanford CS224n — NLP with Deep Learning](http://web.stanford.edu/class/cs224n/)                                                           | Kuliah lengkap | Materi paling komprehensif untuk NLP              |
+| [The Illustrated Word2vec — Jay Alammar](https://jalammar.github.io/illustrated-word2vec/)                                                  | Visualisasi    | Penjelasan embedding yang sangat mudah dimengerti |
+| [Hugging Face NLP Course](https://huggingface.co/learn/nlp-course)                                                                           | Kursus gratis  | Jembatan ke Transformer/Lab berikutnya            |
+| [Natural Language Processing with Transformers (book)](https://www.oreilly.com/library/view/natural-language-processing-with/9781098136789/) | Buku           | Jika ingin pendalaman transformer-based NLP       |
 
 ---
 
