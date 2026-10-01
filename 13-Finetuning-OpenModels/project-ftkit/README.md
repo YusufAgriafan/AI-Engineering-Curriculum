@@ -61,7 +61,7 @@ eksplisit supaya kucing-kucingan "rank r" terlihat matematikanya.
 ```
 DATASET
   24 contoh sentimen (16 train + 8 val) | fitur 17-dim (16 + flag negasi)
-  loss awal 0.6882 | FORMAT_SFT 8 baris (6 positif / 2 negatif — sengaja timpang)
+  loss awal 0.6882 | FORMAT_SFT 8 baris (5 positif / 3 negatif — sengaja timpang)
 
 SFT
   split 8 contoh rasio 0.25 → (5, 3) | oversample per_label=6 → 12 baris (6/6)
@@ -137,7 +137,7 @@ python _calib.py
    diduplikasi terlalu banyak, dan alternatif apa selain duplikasi?
 4. Kuantisasi Q4 memangkas 14 GB → 3,5 GB dengan skor turun 0.82 → 0.78.
    Untuk kasus apa kompromi itu layak, dan kapan TIDAK layak?
-5. Keputusan API vs lokal berubah di sekitar ~2.400 req/hari (asumsi modul).
+5. Keputusan API vs lokal berubah di sekitar ~6.061 req/hari (asumsi modul).
    Faktor nyata apa yang bisa menggeser ambang itu?
 6. Klasifier ini tahu dia tidak yakin via satu angka skor. LLM open-weight tidak
    punya satu angka 'yakin' — bagaimana mendeteksi ketidakpastian di LLM nyata,

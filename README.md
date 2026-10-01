@@ -96,6 +96,8 @@ Untuk bab AI Engineering (9+): `pip install openai anthropic langchain langgraph
 | 10 — Prompt Engineering | ✅ | ✅ | ✅ | ✅ | ✅ Lembar prompt & harness eval (157 test) |
 | 11 — LLM API & Orkestrasi | ✅ | ✅ | ✅ | ✅ | ✅ llmkit: cost/retry/fallback/cache/stream/tools/pipeline (107 test) |
 | 12 — RAG | ✅ | ✅ | ✅ | ✅ | ✅ ragkit: vectorstore/retriever/abstain/cache/hybrid/rerank/pipeline/evaluate (66 test) |
+| 13 — Fine-tuning & Open-Weight Models | ✅ | ✅ 22 poin | ✅ | ✅ | ✅ ftkit: tokenizer/SFT/LoRA/kuantisasi/trainer/api/eval (44 test) |
+| 14 — Agentic AI | ✅ | ✅ 22 poin | ✅ | ✅ | ✅ agentkit: tools/loop_react/guardrail/memory/agent (57 test) |
 
 > Lab/kuis/project sudah terverifikasi otomatis (skrip `_verify_*.py` di tiap folder bab) —
 > semua angka terkunci seed dan lolos pengecekan.

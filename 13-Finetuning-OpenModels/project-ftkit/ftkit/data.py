@@ -68,7 +68,7 @@ DATA_OOD = {
 
 # --------------------------------------------------------------------------
 # 2. Format SFT (JSONL ala Alpaca): instruksi → respons.
-#    SENGAJA tidak seimbang (6 positif, 2 negatif) untuk latihan oversample.
+#    SENGAJA tidak seimbang (5 positif, 3 negatif) untuk latihan oversample.
 # --------------------------------------------------------------------------
 TEMPLATE_INSTRUKSI = ("Klasifikasikan sentimen ulasan berikut. "
                       "Jawab HANYA satu kata: positif atau negatif.")

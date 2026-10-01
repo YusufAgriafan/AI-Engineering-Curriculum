@@ -54,7 +54,7 @@ BLOK1_MD = [
     "## Blok 1 — Dataset SFT: Format JSONL ala Alpaca",
     "",
     "Fine-tuning instruksi (SFT) memakai pasangan **instruksi → respons** dalam JSONL.",
-    "Dataset sengaja TIDAK seimbang (6 positif / 2 negatif) — masalah nyata yang",
+    "Dataset sengaja TIDAK seimbang (5 positif / 3 negatif) — masalah nyata yang",
     "kamu perbaiki dengan **oversampling** deterministik (Blok 1b).",
 ]
 
@@ -262,7 +262,7 @@ ANALISIS = [
     "   diduplikasi terlalu banyak, dan alternatif apa selain duplikasi?",
     "4. Kuantisasi Q4 memangkas 14 GB → 3,5 GB dengan skor turun 0.82 → 0.78.",
     "   Untuk kasus apa kompromi itu layak, dan kapan TIDAK layak?",
-    "5. Keputusan API vs lokal berubah di sekitar ~2.400 req/hari (dengan asumsi",
+    "5. Keputusan API vs lokal berubah di sekitar ~6.061 req/hari (dengan asumsi",
     "   token & tarif di modul). Faktor nyata apa yang bisa menggeser ambang itu?",
     "6. Generator/klasifier ini tahu dia tidak yakin via skor. LLM open-weight yang",
     "   di-fine-tune tidak punya satu angka 'yakin' — bagaimana cara mendeteksi",
